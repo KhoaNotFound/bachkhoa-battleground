@@ -303,13 +303,13 @@ export class Host {
     for (const p of this.alivePlayers()) { const d = Math.hypot(p.x - x, p.z - z); if (d < maxD && !wallBetween(p.x, p.z, x, z)) return true; }
     return false;
   }
-  hiddenPoint(near, minD, maxD, clear = 10) {
+  hiddenPoint(near, minD, maxD, clear = 10, othersClear = 0) {
     const rooms = Object.keys(ROOMS).filter((r) => r !== 'yard');
     for (let k = 0; k < 80; k++) {
       const pt = randomPointIn(pick(rooms));
       const d = near ? Math.hypot(pt.x - near.x, pt.z - near.z) : 30;
       if (near && (d < minD || d > maxD)) continue;
-      if (this.alivePlayers().some((p) => Math.hypot(p.x - pt.x, p.z - pt.z) < clear)) continue;
+      if (this.alivePlayers().some((p) => Math.hypot(p.x - pt.x, p.z - pt.z) < (near && p.id !== near.id ? Math.max(clear, othersClear) : clear))) continue;
       if (this.seenByAny(pt.x, pt.z, 40)) continue;
       return pt;
     }
@@ -343,7 +343,8 @@ export class Host {
     return (Math.random() < 0.7 ? others[0] : pick(others.length ? others : all)).id;
   }
   spawnGhost(kind, target) {
-    const pt = kind === 'GLIMPSE' ? this.hiddenPoint(target, 15, 30) : this.hiddenPoint(target, 10, this.cfg.R_HEAR - 2);
+    const far = this.cfg.NEAR_DIST + 5;  // không xuất hiện gần những người còn lại
+    const pt = kind === 'GLIMPSE' ? this.hiddenPoint(target, 15, 30, 10, far) : this.hiddenPoint(target, 10, this.cfg.R_HEAR - 2, 10, far);
     if (!pt) return null;
     const imp = this.impFor(target);
     const st = this.players.get(imp).stat;
@@ -370,7 +371,8 @@ export class Host {
     g.speed = GAIT.walk;
   }
   aloneFor(p) { return p.aloneSince == null ? 0 : this.nowSec - p.aloneSince; }
-  aloneNow(p) { return this.solo || !this.alivePlayers().some((q) => q !== p && dist2(q, p) < this.cfg.R_HEAR); }
+  together(a, b) { const d = dist2(a, b); return d < this.cfg.NEAR_DIST || (d < this.cfg.ALONE_DIST && !wallBetween(a.x, a.z, b.x, b.z)); }
+  aloneNow(p) { return this.solo || !this.alivePlayers().some((q) => q !== p && this.together(p, q)); }
   // Đi như người: đường đi bị xê dịch ngẫu nhiên (không đi thẳng tắp theo lưới), tốc độ theo dáng
   // đi/chạy/cúi của người chơi và có quán tính, lắc lư ngang theo bước, thỉnh thoảng khựng lại.
   walk(g, tx, tz, dt, speedMul = 1) {
@@ -454,7 +456,9 @@ export class Host {
       case 'LURK': {
         if (!tgt || !tgt.alive) { tgt = alive.sort((a, b) => dist2(a, g) - dist2(b, g))[0]; if (!tgt) break; g.target = tgt.id; }
         g.seenT = seen ? g.seenT + dt : Math.max(0, g.seenT - dt);
-        if (!g.dest || seen || dist2(g, tgt) > R || (g.stateT % 8 < dt)) g.dest = this.hiddenPoint(tgt, 8, R - 3, 8) || g.dest;
+        if (!g.dest || seen || dist2(g, tgt) > R || (g.stateT % 8 < dt)) g.dest = this.hiddenPoint(tgt, 8, R - 3, 8, this.cfg.NEAR_DIST + 5) || g.dest;
+        // người bị nhắm đã về với nhóm: rút đi
+        if (!this.aloneNow(tgt) && !seen) { this.setGhost(g, 'LEAVE'); break; }
         if (g.dest) this.walk(g, g.dest.x, g.dest.z, dt, seen ? 1.4 : 0.7);
         if (g.seenT > 2) { this.setGhost(g, 'LEAVE'); break; }
         if (g.stateT > g.life && !seen) { g.state = 'GONE'; break; }
@@ -544,9 +548,9 @@ export class Host {
     if (ph !== this.phase) { this.phase = ph; this.io.emit({ t: 'ev', e: 'phase', phase: ph }, true); }
     if (this.tGame >= nightLength(this.cfg)) { this.end(false, '08:00 rồi mà chưa ra được cổng. Hẹn gặp lại năm sau!'); return; }
     const alive = this.alivePlayers();
-    // đi lẻ: không có người sống nào khác trong R_HEAR
+    // đi lẻ: không đứng cùng ai (xem together)
     for (const p of alive) {
-      const alone = !alive.some((q) => q !== p && dist2(q, p) < this.cfg.R_HEAR);
+      const alone = !alive.some((q) => q !== p && this.together(p, q));
       if (alone && p.aloneSince == null) p.aloneSince = this.nowSec;
       if (!alone) p.aloneSince = null;
       // thống kê dáng đi mỗi giây (cho ngoại hình ma)
@@ -567,12 +571,10 @@ export class Host {
     const deadN = [...this.players.values()].filter((p) => !p.alive).length;
     const cap = this.cfg.MAX_GHOSTS[ph - 1] + deadN - this.respawnBlock.length;
     if (live.length < cap && this.nowSec - this.lastSpawn > 10 && this.nowSec > 20 && alive.length) {
-      // nhắm người đi lẻ lâu nhất (chiến thuật 3); không ai lẻ thì chỉ nấp nghe hoặc lướt qua
-      const lone = alive.filter((p) => this.solo || p.aloneSince != null).sort((a, b) => a.aloneSince - b.aloneSince)[0];
-      const target = lone || pick(alive);
-      const kind = ph === 1 && Math.random() < 0.35 ? 'GLIMPSE' : 'LURK';
-      if (lone || kind === 'GLIMPSE' || Math.random() < 0.5) this.spawnGhost(kind, target);
-      else this.lastSpawn = this.nowSec;
+      // chỉ xuất hiện khi có người tách nhóm đủ lâu, nhắm người đi lẻ lâu nhất (chiến thuật 3)
+      const lone = alive.filter((p) => this.solo || this.aloneFor(p) >= this.cfg.T_SPAWN).sort((a, b) => a.aloneSince - b.aloneSince)[0];
+      if (lone) this.spawnGhost(ph === 1 && Math.random() < 0.35 ? 'GLIMPSE' : 'LURK', lone);
+      else this.lastSpawn = this.nowSec - 5;
     }
     for (const g of this.ghosts) this.updateGhost(g, dt);
     this.ghosts = this.ghosts.filter((g) => g.state !== 'GONE' && !(g.state === 'DEAD' && this.nowSec > g.removeAt));

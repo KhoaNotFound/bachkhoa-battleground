@@ -9,7 +9,12 @@ export const CONFIG = {
   PHASE2_AT: '01:00',
   PHASE3_AT: '04:00',
   R_HEAR: 20,                // m, bán kính nghe được giọng
-  T_ALONE: 15,               // s, đi lẻ bao lâu thì ma tới bắt chuyện
+  // đi lẻ = không có người sống nào khác trong NEAR_DIST, hoặc trong ALONE_DIST mà nhìn thấy nhau
+  // (hai phòng task khác nhau là tách nhóm; đứng hai bên một bức tường vẫn tính là đi cùng nhau)
+  NEAR_DIST: 15,
+  ALONE_DIST: 30,
+  T_SPAWN: 25,               // s, phải có người đi lẻ liên tục chừng này thì ma mới xuất hiện (nấp nghe / lướt qua)
+  T_ALONE: 40,               // s, đi lẻ bao lâu thì ma tới bắt chuyện
   MAX_GHOSTS: [1, 2, 3],     // theo pha
   GHOST_RESPAWN: 60,         // s
   NOISE_RADIUS: 15,          // m
@@ -72,7 +77,8 @@ export const FACULTIES = [
   { id: 'ch', name: 'Hoá', task: 'ch' },
   { id: 'ce', name: 'Xây dựng', task: 'ce' },
 ];
-export const SHIRTS = ['#e53935', '#1e88e5', '#43a047', '#fdd835', '#8e24aa', '#fb8c00', '#00acc1', '#f06292', '#eeeeee', '#5d4037'];
+// mọi người (và ma) mặc cùng một màu áo: chỉ nhận ra nhau qua giọng và cách di chuyển
+export const SHIRT = '#1e88e5';
 
 export const DODGE_LINES = [
   'Ờ, đợi xíu.',

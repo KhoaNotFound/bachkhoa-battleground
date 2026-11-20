@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { CollisionWorld, Mover } from '../../js/physics.js';
 import { Avatar, buildAwmMesh } from '../../js/avatar.js';
 import { clamp, damp, lerpAngle, cleanName, escapeHtml } from '../../js/util.js';
-import { CONFIG, applyOverrides, clockText, FACULTIES, SHIRTS, DODGE_LINES } from './config.js';
+import { CONFIG, applyOverrides, clockText, FACULTIES, SHIRT, DODGE_LINES } from './config.js';
 import { Net, roomCode } from './net.js';
 import { Host } from './host.js';
 import { Voice, f32ToI16, int16ToB64, b64ToInt16, ulawEncode } from './voice.js';
@@ -104,8 +104,8 @@ $('codeIn').onkeydown = (e) => { if (e.key === 'Enter') $('joinBtn').click(); };
 function createRoom(solo) {
   if (!readName() || !net.client) return;
   const code = roomCode();
-  room = { code, hostId: net.id, isHost: true, solo, started: false, roster: [{ id: net.id, name: me.name, fac: null, color: SHIRTS[0], ready: false }] };
-  me.color = SHIRTS[0];
+  room = { code, hostId: net.id, isHost: true, solo, started: false, roster: [{ id: net.id, name: me.name, fac: null, color: SHIRT, ready: false }] };
+  me.color = SHIRT;
   net.joinRoom(code, { name: me.name, host: true });
   clearInterval(room.annT);
   room.annT = setInterval(() => { if (room && room.isHost && !room.started && !solo) net.announce({ name: me.name, count: room.roster.length, max: cfg.MAX_PLAYERS, started: false }); }, 2000);
@@ -147,15 +147,13 @@ function hostLobby(from, m) {
     if (r) { net.sendTo(from, { t: 'joinok', code: room.code }); pushLobby(); return; }
     if (room.started) return net.sendTo(from, { t: 'joinno', reason: 'Trận đã bắt đầu.' });
     if (room.roster.length >= cfg.MAX_PLAYERS || room.solo) return net.sendTo(from, { t: 'joinno', reason: 'Phòng đã đủ 5 người.' });
-    const used = new Set(room.roster.map((x) => x.color));
-    room.roster.push({ id: from, name: cleanName(m.name || 'Bạn') || 'Bạn', fac: null, color: SHIRTS.find((c) => !used.has(c)) || SHIRTS[0], ready: false });
+    room.roster.push({ id: from, name: cleanName(m.name || 'Bạn') || 'Bạn', fac: null, color: SHIRT, ready: false });
     net.sendTo(from, { t: 'joinok', code: room.code });
     pushLobby();
   } else if (m.t === 'pref' && r) {
     if (m.fac !== undefined) {
       if (m.fac === null || (FACULTIES.some((f) => f.id === m.fac) && !room.roster.some((x) => x !== r && x.fac === m.fac))) r.fac = m.fac;
     }
-    if (m.color && SHIRTS.includes(m.color)) r.color = m.color;
     if (!r.fac) r.ready = false;
     pushLobby();
   } else if (m.t === 'ready' && r) {
@@ -180,14 +178,12 @@ function renderLobby() {
   const mine = room.roster.find((r) => r.id === net.id) || {};
   me.fac = mine.fac; me.color = mine.color || me.color;
   $('pCount').textContent = room.roster.length;
-  $('roster').innerHTML = room.roster.map((r) => `<li data-id="${r.id}"><span class="dot" style="background:${r.color}"></span>${escapeHtml(r.name)}${r.id === net.id ? ' (bạn)' : ''}${r.id === room.hostId ? ' 👑' : ''}<span class="tag">${r.fac ? FACULTIES.find((f) => f.id === r.fac).name : 'chưa chọn khoa'} ${r.ready ? '<b class="ready">· sẵn sàng</b>' : ''}</span></li>`).join('');
+  $('roster').innerHTML = room.roster.map((r) => `<li data-id="${r.id}">${escapeHtml(r.name)}${r.id === net.id ? ' (bạn)' : ''}${r.id === room.hostId ? ' 👑' : ''}<span class="tag">${r.fac ? FACULTIES.find((f) => f.id === r.fac).name : 'chưa chọn khoa'} ${r.ready ? '<b class="ready">· sẵn sàng</b>' : ''}</span></li>`).join('');
   $('facList').innerHTML = FACULTIES.map((f) => {
     const taker = room.roster.find((r) => r.fac === f.id);
     return `<button data-fac="${f.id}" class="${mine.fac === f.id ? 'on' : taker ? 'taken' : ''}" ${taker && taker.id !== net.id ? 'disabled' : ''}>${f.name}${taker && taker.id !== net.id ? ' · ' + escapeHtml(taker.name) : ''}</button>`;
   }).join('');
   $('facList').querySelectorAll('[data-fac]').forEach((b) => (b.onclick = () => toHost({ t: 'pref', fac: mine.fac === b.dataset.fac ? null : b.dataset.fac })));
-  $('shirtList').innerHTML = SHIRTS.map((c) => `<button data-c="${c}" class="${mine.color === c ? 'on' : ''}" style="background:${c}"></button>`).join('');
-  $('shirtList').querySelectorAll('[data-c]').forEach((b) => (b.onclick = () => toHost({ t: 'pref', color: b.dataset.c })));
   $('readyBtn').disabled = !(mine.fac && micOk);
   $('readyBtn').textContent = mine.ready ? 'Huỷ sẵn sàng' : 'Sẵn sàng';
   $('readyBtn').classList.toggle('on', !!mine.ready);
