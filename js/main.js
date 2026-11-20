@@ -8,6 +8,7 @@ import { Audio } from './audio.js';
 import { Net } from './net.js';
 import { HUD } from './hud.js';
 import { Inspector, loadAdminKey } from './admin.js';
+import { Chat, RateLimit, cleanChat } from './chat.js';
 import { clamp, damp, lerp, lerpAngle, angleDiff, cleanName, escapeHtml, r2, r3 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -120,6 +121,10 @@ const feed = [];
     setLoad(55, 'Đang chuẩn bị vũ khí…');
     await nextFrame();
     hud = new HUD(map.minimap);
+    chat = new Chat({
+      onSend: (text) => { net.send({ t: 'chat', m: text }); chat.add(myName(), me.color, text, true); },
+      onOpenChange: (open) => { if (open) { for (const k in keys) keys[k] = false; firing = false; adsHeld = false; } },
+    });
     vm = new ViewModel(renderer, audio);
     vm.setColor(me.color);
     vfx = new VFX(scene);
@@ -227,7 +232,7 @@ function allPlayers() {
   return rows;
 }
 function myName() { return cleanName(settings.name); }
-let inspector = null, adminKey = false;
+let inspector = null, adminKey = false, chat = null;
 const isAdmin = () => adminKey && (settings.name || '').trim().toLowerCase() === 'khoanotfound';
 function updateAdminBtn() { const b = $('inspectBtn'); if (b) b.classList.toggle('hidden', !isAdmin()); }
 
@@ -324,6 +329,7 @@ function leaveToLobby() {
 addEventListener('keydown', (e) => {
   if (e.target && e.target.tagName === 'INPUT') return;
   if (e.code === 'Tab') { e.preventDefault(); showBoard = true; }
+  if ((e.code === 'Slash' || e.key === '/') && !e.repeat && chat && state !== 'loading' && state !== 'inspect') { e.preventDefault(); chat.toggleOpen(); return; }
   if (state !== 'playing') return;
   keys[e.code] = true;
   if (e.code === 'Digit1') switchWeapon(0);
@@ -345,6 +351,7 @@ addEventListener('mousemove', (e) => {
   if (document.pointerLockElement === canvas || TEST) { mouseDX += e.movementX || 0; mouseDY += e.movementY || 0; }
 });
 addEventListener('mousedown', (e) => {
+  if (chat?.open) return;
   if (state !== 'playing' || (document.pointerLockElement !== canvas && !TEST)) return;
   if (e.button === 0) { firing = true; tryFire(false); }
   if (e.button === 2) {
@@ -618,7 +625,7 @@ function onNetMessage(from, m) {
       if (me.alive) {
         const cp = closestOnSeg(o, e, camera.position);
         const d = cp.distanceTo(camera.position);
-        if (d < 4 && d > 0.3) audio.noise(audio.master, audio.ctx ? audio.ctx.currentTime : 0, 0.15, { type: 'bandpass', f0: 4000, f1: 1200, q: 2, gain: 0.6 });
+        if (d < 6 && d > 0.25) audio.whiz(cp, d);
       }
       break;
     }
@@ -659,6 +666,15 @@ function onNetMessage(from, m) {
       break;
     }
     case 'bye': removePeer(from); break;
+    case 'chat': {
+      // per-sender limit on the receiving side too: modified clients can bypass their own
+      if (!p.chatRL) p.chatRL = new RateLimit(4, 2000, 600);
+      const text = cleanChat(m.m);
+      if (!text || !p.chatRL.take(now)) break;
+      chat?.add(p.name || '???', p.color || '#bbbbbb', text);
+      if (p.avatar) p.avatar.say(text);
+      break;
+    }
   }
 }
 function closestOnSeg(a, b, p) {
@@ -827,6 +843,7 @@ function updatePeers(dt, now) {
     av.update(dt, { x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, speed: s.sp, crouch: s.c, weapon: s.w, protected: s.pr });
     const dist = Math.hypot(s.x - camera.position.x, s.z - camera.position.z);
     av.tag.visible = dist < 70;
+    av.updateBubble(now, Math.hypot(dist, s.y + 1.6 - camera.position.y));
     // remote footsteps
     if (s.g && s.sp > 3 && !s.c && dist < 35) {
       p.stepAcc += s.sp * dt;
@@ -934,4 +951,4 @@ function frame() {
 }
 
 // test hooks
-window.__game = { audio, get inspector() { return inspector; }, me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
+window.__game = { audio, get chat() { return chat; }, get inspector() { return inspector; }, me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };

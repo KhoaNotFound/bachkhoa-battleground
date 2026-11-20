@@ -113,6 +113,15 @@ export class Audio {
     // tail into reverb
     this.noise(o.rev, t + 0.02, 0.9, { type: 'lowpass', f0: 1400, f1: 120, gain: 0.9 });
   }
+  // a bullet passing close by: supersonic crack + falling whoosh, placed where it passed
+  whiz(pos, dist) {
+    if (!this.ctx) return;
+    const o = this.out(pos, 1.5, 0.6), t = this.ctx.currentTime;
+    const k = Math.max(0.15, 1 - dist / 6);
+    this.noise(o.node, t, 0.03, { type: 'highpass', f0: 5500, f1: 3500, gain: 1.6 * k, attack: 0.001 });
+    this.noise(o.node, t + 0.01, 0.28, { type: 'bandpass', f0: 5200, f1: 700, q: 3, gain: 1.1 * k, attack: 0.01 });
+    this.tone(o.node, t + 0.01, 0.22, { type: 'sine', f0: 2600, f1: 900, gain: 0.08 * k, attack: 0.005 });
+  }
   bolt(delay = 0.35, vol = 1.0, pitch = 1.0, partial = false) {
     if (!this.ctx) return;
     const d = this.master, t = this.ctx.currentTime + delay;

@@ -126,6 +126,14 @@ wss.on('connection', (ws, req) => {
       ws.send(JSON.stringify({ t: 'pong', ts: m.ts }));
       return;
     }
+    // chat anti-spam: 4 messages at once, refill one every 2 s, 120 chars max
+    if (raw.startsWith('{"t":"chat"')) {
+      const now = Date.now();
+      ws.chatTokens = Math.min(4, (ws.chatTokens ?? 4) + (now - (ws.chatT || now)) / 2000);
+      ws.chatT = now;
+      if (ws.chatTokens < 1 || raw.length > 600) return;
+      ws.chatTokens -= 1;
+    }
     const out = '{"f":"' + id + '",' + raw.slice(1);
     for (const c of set) if (c !== ws && c.readyState === 1) c.send(out);
     enqueue(raw);

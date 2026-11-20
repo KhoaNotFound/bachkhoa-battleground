@@ -138,6 +138,24 @@ export class Avatar {
     this.weapon = 1; this.punchT = 1; this.punchSide = 0; this.recoil = 0;
     this.name = name;
   }
+  // chat popup above the name tag; main.js shows it only when the viewer is close
+  say(text, ms = 6000) {
+    if (!this.bubble) {
+      this.bubble = new THREE.Sprite(new THREE.SpriteMaterial({ depthWrite: false, transparent: true }));
+      this.bubble.scale.set(3.2, 1.2, 1);
+      this.bubble.position.y = 3.05;
+      this.bubble.renderOrder = 6;
+      this.root.add(this.bubble);
+    }
+    this.bubble.material.map?.dispose();
+    this.bubble.material.map = TX.chatBubble(text);
+    this.bubble.material.needsUpdate = true;
+    this.bubbleUntil = performance.now() + ms;
+  }
+  updateBubble(now, dist) {
+    if (!this.bubble) return;
+    this.bubble.visible = now < this.bubbleUntil && dist < 25;
+  }
   setName(name, color) {
     if (name === this.name && color === this.color) return;
     this.name = name; this.color = color;
@@ -208,6 +226,7 @@ export class Avatar {
   dispose() {
     this.root.removeFromParent();
     this.tagMat.map.dispose();
+    if (this.bubble) this.bubble.material.map?.dispose();
   }
 }
 

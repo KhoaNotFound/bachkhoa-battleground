@@ -210,6 +210,27 @@ export function faceTexture(skin) {
   t.magFilter = THREE.NearestFilter;
   return t;
 }
+// speech bubble above a player's head (word-wrapped, max 3 lines)
+export function chatBubble(text) {
+  const [c, g] = cv(512, 192);
+  g.font = '600 30px "Be Vietnam Pro", sans-serif';
+  const words = text.split(' '), lines = [];
+  let cur = '';
+  for (const w of words) {
+    const t = cur ? cur + ' ' + w : w;
+    if (g.measureText(t).width > 440 && cur) { lines.push(cur); cur = w; } else cur = t;
+  }
+  if (cur) lines.push(cur);
+  if (lines.length > 3) { lines.length = 3; lines[2] = lines[2].slice(0, -1) + '…'; }
+  const lw = Math.min(472, Math.max(...lines.map((l) => g.measureText(l).width)) + 40), lh = lines.length * 38 + 22;
+  const x = (512 - lw) / 2, y = 150 - lh;
+  g.fillStyle = 'rgba(255,255,255,0.94)';
+  g.beginPath(); g.roundRect(x, y, lw, lh, 18); g.fill();
+  g.beginPath(); g.moveTo(240, 150); g.lineTo(272, 150); g.lineTo(256, 174); g.closePath(); g.fill();
+  g.fillStyle = '#14202e'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  lines.forEach((l, i) => g.fillText(l, 256, y + 30 + i * 38, 460));
+  return tex(c, false);
+}
 export function nameTag(name, color) {
   const [c, g] = cv(256, 64);
   g.font = '700 30px "Be Vietnam Pro", sans-serif';

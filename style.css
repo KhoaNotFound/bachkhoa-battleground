@@ -207,3 +207,15 @@ button { font-family: inherit; cursor: pointer; }
 
 /* full map while holding M */
 #bigmap { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 14px; border: 2px solid rgba(255,255,255,0.35); box-shadow: 0 10px 40px rgba(0,0,0,0.55); opacity: 0.95; pointer-events: none; }
+
+/* global chat */
+#chat { position: fixed; left: 28px; bottom: 100px; width: min(420px, calc(100vw - 56px)); z-index: 40; pointer-events: none; font-size: 14px; }
+#chat .chat-log { list-style: none; margin: 0 0 6px; padding: 0; max-height: 220px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+#chat .chat-log li { padding: 3px 9px; margin-top: 3px; background: rgba(8,14,26,0.55); border-radius: 8px; color: #eef3f8; text-shadow: 0 1px 2px rgba(0,0,0,0.6); word-break: break-word; transition: opacity .6s; width: fit-content; max-width: 100%; }
+#chat .chat-log li.sys { color: #ffd45c; font-style: italic; }
+#chat .chat-log li.old { opacity: 0; }
+#chat.open .chat-log { overflow-y: auto; pointer-events: auto; }
+#chat.open .chat-log li.old { opacity: 1; }
+#chat .chat-input { display: flex; align-items: center; gap: 8px; background: rgba(8,14,26,0.8); border: 1px solid rgba(255,212,92,0.6); border-radius: 10px; padding: 6px 10px; pointer-events: auto; }
+#chat .chat-input span { color: #ffd45c; font-family: var(--display); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; }
+#chat .chat-input input { flex: 1; background: transparent; border: 0; outline: 0; color: #fff; font: inherit; }
