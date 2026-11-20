@@ -26,6 +26,20 @@ export function b64ToInt16(b64) {
   for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
   return new Int16Array(u8.buffer);
 }
+// μ-law 8 bit (G.711) cho giọng đi vòng qua MQTT: 8 kB/s
+export function ulawEncode(x) {
+  let s = Math.max(-1, Math.min(1, x)) * 32635;
+  const sign = s < 0 ? 0x80 : 0; if (sign) s = -s;
+  s += 0x84; let e = 7;
+  for (let m = 0x4000; (s & m) === 0 && e > 0; m >>= 1) e--;
+  return ~(sign | (e << 4) | ((s >> (e + 3)) & 0x0f)) & 0xff;
+}
+function ulawDecode(u) {
+  u = ~u & 0xff;
+  const sign = u & 0x80, e = (u >> 4) & 7, m = u & 0x0f;
+  const s = (((m << 3) + 0x84) << e) - 0x84;
+  return (sign ? -s : s) / 32768;
+}
 export function f32ToI16(f) { const o = new Int16Array(f.length); for (let i = 0; i < f.length; i++) o[i] = Math.max(-32768, Math.min(32767, f[i] * 32767)); return o; }
 export function i16ToF32(i) { const o = new Float32Array(i.length); for (let k = 0; k < i.length; k++) o[k] = i[k] / 32768; return o; }
 
@@ -38,6 +52,7 @@ export class Voice {
     this.onSegment = null;     // (Float32Array 16 kHz) => void
     this.capturing = true;     // chỉ ghi khi đang phát (open mic / đang giữ V, còn sống)
     this.level = 0;
+    this.relayPre = []; this.relayOn = false;
     this.vad = { nf: 0.004, speech: false, run: 0, sil: 0, cur: [], pre: [], resamp: 0 };
   }
   // phải gọi trong một thao tác của người dùng (click)
@@ -101,6 +116,13 @@ export class Voice {
     if (!v.speech) v.nf = rms < v.nf ? v.nf * 0.9 + rms * 0.1 : v.nf * 0.998 + rms * 0.002;
     const th = Math.max(v.nf * 3.2, 0.008);
     const isSp = this.capturing && rms > th;
+    // đường dự phòng: gửi khung giọng thô cho người không nối P2P được (kèm 4 khung trước khi bắt đầu nói)
+    if (this.onRelay) {
+      if (this.capturing && (isSp || v.speech)) {
+        if (!this.relayOn) { this.relayOn = true; for (const q of this.relayPre) this.onRelay(q); this.relayPre = []; }
+        this.onRelay(f);
+      } else { this.relayOn = false; (this.relayPre ||= []).push(f); if (this.relayPre.length > 4) this.relayPre.shift(); }
+    }
     if (!v.speech) {
       v.pre.push(f); if (v.pre.length > 8) v.pre.shift();
       v.run = isSp ? v.run + 1 : 0;
@@ -149,23 +171,45 @@ export class Voice {
     ch.occ.gain.setTargetAtTime(g, t, 0.08);
     ch.lp.frequency.setTargetAtTime(occluded ? this.cfg.OCCLUSION_LOWPASS : 20000, t, 0.08);
   }
+  // chuỗi xử lý của một người (dùng chung cho luồng P2P và giọng đi vòng qua MQTT)
+  ensurePeer(id) {
+    let p = this.peers.get(id);
+    if (p || !this.ctx) return p;
+    const ch = this.chain();
+    const an = this.ctx.createAnalyser(); an.fftSize = 512;
+    const tap = this.ctx.createGain(); tap.connect(ch.occ); tap.connect(an);
+    p = { tap, an, buf: new Float32Array(512), next: 0, ...ch };
+    this.peers.set(id, p);
+    return p;
+  }
   addPeer(id, stream) {
     if (!this.ctx) return;
-    this.removePeer(id);
+    const p = this.ensurePeer(id);
+    if (p.src) { try { p.src.disconnect(); } catch {} }
     // Chrome: luồng WebRTC từ xa chỉ chảy vào Web Audio khi được gắn vào một phần tử <audio> (để muted)
-    const el = new Audio(); el.muted = true; el.srcObject = stream; el.play().catch(() => {});
-    const src = this.ctx.createMediaStreamSource(stream);
-    const ch = this.chain();
-    src.connect(ch.occ);
-    // đo mức âm để hiện biểu tượng đang nói
-    const an = this.ctx.createAnalyser(); an.fftSize = 512; src.connect(an);
-    this.peers.set(id, { el, src, an, buf: new Float32Array(512), ...ch });
+    if (!p.el) { p.el = new Audio(); p.el.muted = true; }
+    p.el.srcObject = stream; p.el.play().catch(() => {});
+    p.src = this.ctx.createMediaStreamSource(stream);
+    p.src.connect(p.tap);
+  }
+  // giọng đi vòng: μ-law 8 kHz, xếp lịch phát nối tiếp với bộ đệm chống giật ~0.25 s
+  playRelay(id, b64) {
+    const p = this.ensurePeer(id);
+    if (!p) return;
+    const s = atob(b64), n = s.length;
+    const buf = this.ctx.createBuffer(1, n, 8000), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = ulawDecode(s.charCodeAt(i));
+    const src = this.ctx.createBufferSource(); src.buffer = buf; src.connect(p.tap);
+    const now = this.ctx.currentTime;
+    if (p.next < now + 0.05 || p.next > now + 1.2) p.next = now + 0.25;
+    src.start(p.next);
+    p.next += buf.duration;
   }
   removePeer(id) {
     const p = this.peers.get(id);
     if (!p) return;
-    try { p.src.disconnect(); p.occ.disconnect(); p.pan.disconnect(); } catch {}
-    p.el.srcObject = null;
+    try { p.src?.disconnect(); p.tap.disconnect(); p.occ.disconnect(); p.pan.disconnect(); } catch {}
+    if (p.el) p.el.srcObject = null;
     this.peers.delete(id);
   }
   peerLevel(id) {

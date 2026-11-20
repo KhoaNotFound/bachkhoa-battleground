@@ -1,7 +1,8 @@
 import { CONFIG, nightLength, phaseOf, gameRate, FACULTIES } from './config.js';
 import { generateTasks, taskView, checkTask, taskQuery, TASK_IDS, TASK_NAMES } from './tasks-logic.js';
 import { intentOf, scoreClips } from './clips.js';
-import { roomAt, wallBetween, findPath, randomPointIn, ROOMS, SPOTS, SPAWNS } from './map.js';
+import { roomAt, wallBetween, findPath, randomPointIn, walkable, ROOMS, SPOTS, SPAWNS } from './map.js';
+import { angleDiff, damp } from '../../js/util.js';
 import { rayPlayer } from '../../js/avatar.js';
 
 // "game-server" của chế độ đêm, chạy trong trình duyệt của chủ phòng (newmod.md mục 4).
@@ -10,6 +11,8 @@ import { rayPlayer } from '../../js/avatar.js';
 // co-op nên chấp nhận được; host vẫn tự kiểm tra tầm bắn, khoảng cách tương tác, điều kiện bắt).
 
 const TICK = 1 / 20;
+// tốc độ giống hệt người chơi (main.js): đi bộ / chạy / cúi
+const GAIT = { walk: 4.0, run: 6.2, sneak: 2.0 };
 const GHOST_STATES = ['LURK', 'GLIMPSE', 'APPROACH', 'TALK', 'LURE', 'LEAVE', 'GRAB', 'DEAD'];
 const rnd = (a, b) => a + Math.random() * (b - a);
 const dist2 = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -39,7 +42,7 @@ export class Host {
         id: r.id, name: r.name, fac: r.fac, color: r.color,
         x: sx, y: 0, z: sz, yaw: Math.PI, pitch: 0, crouch: false, flash: true, spd: 0,
         alive: true, task: null, aloneSince: 0, hasKey: false, gun: 0, weapon: 0,
-        stat: { n: 0, moveN: 0, speedSum: 0, flashOn: 0, crouchN: 0 }, lastStat: 0,
+        stat: { n: 0, moveN: 0, speedSum: 0, flashOn: 0, crouchN: 0, runN: 0, turnSum: 0, flips: 0 }, lastStat: 0, prevYaw: 0, prevFlash: true,
       });
     });
     this.dbgSubs = new Set();
@@ -345,46 +348,104 @@ export class Host {
     const imp = this.impFor(target);
     const st = this.players.get(imp).stat;
     const g = {
-      id: this.ghostSeq++, imp, x: pt.x, z: pt.z, yaw: 0, crouch: false, flash: true,
-      speed: st.moveN > 20 ? Math.max(2.4, Math.min(4.5, st.speedSum / st.moveN)) : this.cfg.GHOST_SPEED,
-      flashP: st.n > 20 ? st.flashOn / st.n : 0.85, crouchP: st.n > 20 ? st.crouchN / st.n : 0.05,
+      id: this.ghostSeq++, imp, x: pt.x, z: pt.z, yaw: Math.random() * 6.28, pitch: 0, crouch: false, flash: true,
       state: kind, stateT: 0, path: null, target: target ? target.id : null, turns: 0, pendingSay: false, habitT: 0,
-      life: rnd(40, 90), seenT: 0,
+      life: rnd(40, 90), seenT: 0, curSpeed: 0, swayPh: Math.random() * 10, glanceT: rnd(0.5, 2), lookOff: 0, lookPitch: 0, pauseT: 0, runT: 0,
     };
+    this.applyHabits(g);
     this.setGhost(g, kind);
     if (kind === 'GLIMPSE') { g.dest = this.hiddenPoint(target, 12, 30); if (!g.dest) return null; }
     this.ghosts.push(g);
     this.lastSpawn = this.nowSec;
     return g;
   }
+  // thói quen lấy từ thống kê của người bị giả dạng (ghi mỗi giây): đèn pin, cúi, chạy, tốc độ quay đầu
+  applyHabits(g) {
+    const st = this.players.get(g.imp).stat, ok = st.n > 20;
+    g.flashP = ok ? st.flashOn / st.n : 0.85;
+    g.crouchP = ok ? st.crouchN / st.n : 0.05;
+    g.runP = st.moveN > 10 ? st.runN / st.moveN : 0.3;
+    g.turnRate = ok ? st.turnSum / st.n : 1.2;                 // rad/s trung bình
+    g.flipEvery = ok && st.flips ? Math.max(4, Math.min(60, st.n / st.flips)) : 20;  // giây giữa hai lần bật/tắt đèn
+    g.speed = GAIT.walk;
+  }
   aloneFor(p) { return p.aloneSince == null ? 0 : this.nowSec - p.aloneSince; }
   aloneNow(p) { return this.solo || !this.alivePlayers().some((q) => q !== p && dist2(q, p) < this.cfg.R_HEAR); }
+  // Đi như người: đường đi bị xê dịch ngẫu nhiên (không đi thẳng tắp theo lưới), tốc độ theo dáng
+  // đi/chạy/cúi của người chơi và có quán tính, lắc lư ngang theo bước, thỉnh thoảng khựng lại.
   walk(g, tx, tz, dt, speedMul = 1) {
     if (!g.path || g.repath <= 0 || !g.goal || Math.hypot(g.goal.x - tx, g.goal.z - tz) > 1.5) {
       g.path = findPath(g.x, g.z, tx, tz) || [[g.x, g.z], [tx, tz]];
-      g.pi = 1; g.goal = { x: tx, z: tz }; g.repath = 1.0;
+      for (let k = 1; k < g.path.length - 1; k++) {
+        const [x, z] = g.path[k], [px, pz] = g.path[k - 1], [nx, nz] = g.path[k + 1];
+        const ox = x + (Math.random() - 0.5) * 1.2, oz = z + (Math.random() - 0.5) * 1.2;
+        if (walkable(ox, oz) && !wallBetween(px, pz, ox, oz) && !wallBetween(ox, oz, nx, nz)) g.path[k] = [ox, oz];
+      }
+      g.pi = 1; g.goal = { x: tx, z: tz }; g.repath = rnd(0.8, 1.4);
     }
     g.repath -= dt;
-    g.curSpeed = g.speed * speedMul;
+    // dáng: chạy khi được yêu cầu nhanh hoặc theo thói quen hay chạy của người bị giả dạng
+    g.runT -= dt;
+    if (g.runT <= 0) { g.runT = rnd(2, 6); g.habitRun = Math.random() < g.runP; }
+    let gait = speedMul >= 1.25 ? 'run' : speedMul <= 0.75 ? 'sneak' : (g.habitRun && speedMul >= 1 ? 'run' : 'walk');
+    if (g.crouch && gait !== 'run') gait = 'sneak';
+    if (gait === 'run') g.crouch = false;
+    let want = GAIT[gait] * (1 + Math.sin(g.swayPh * 0.23) * 0.07);
+    if (g.pauseT > 0) { g.pauseT -= dt; want = 0; }
+    else if (gait !== 'run' && Math.random() < dt * 0.07) g.pauseT = rnd(0.25, 0.9);  // khựng lại, nhìn quanh
+    g.curSpeed = damp(g.curSpeed || 0, want, want > g.curSpeed ? 7 : 10, dt);
     let step = g.curSpeed * dt;
-    while (step > 0 && g.pi < g.path.length) {
+    while (step > 1e-4 && g.pi < g.path.length) {
       const [px, pz] = g.path[g.pi];
       const dx = px - g.x, dz = pz - g.z, d = Math.hypot(dx, dz);
-      if (d < 1e-3) { g.pi++; continue; }
+      if (d < 0.05) { g.pi++; continue; }
       const s = Math.min(step, d);
       g.x += (dx / d) * s; g.z += (dz / d) * s;
-      g.yaw = Math.atan2(-dx, -dz);
+      const my = Math.atan2(-dx, -dz);
+      g.moveYaw = g.moveYaw == null ? my : g.moveYaw + angleDiff(g.moveYaw, my) * Math.min(1, dt * 9);
       step -= s; g.moving = true;
       if (s >= d) g.pi++;
     }
-    return g.pi >= g.path.length;
+    // lắc lư ngang theo nhịp bước
+    if (g.curSpeed > 0.3) {
+      g.swayPh += dt * (2.2 + g.curSpeed * 0.9);
+      const off = Math.sin(g.swayPh) * (0.05 + g.curSpeed * 0.012) + Math.sin(g.swayPh * 0.31) * 0.08;
+      const dOff = off - (g.lastOff || 0); g.lastOff = off;
+      const sx = Math.cos(g.moveYaw || 0) * dOff, sz = -Math.sin(g.moveYaw || 0) * dOff;
+      if (walkable(g.x + sx, g.z + sz)) { g.x += sx; g.z += sz; }
+    }
+    return g.pi >= g.path.length && g.curSpeed < 0.8 ? true : g.pi >= g.path.length;
   }
-  face(g, p) { g.yaw = Math.atan2(-(p.x - g.x), -(p.z - g.z)); }
+  face(g, p) { g.focus = p; }
+  // Hướng nhìn (camera) tách khỏi hướng đi: liếc nhanh sang hai bên / ra sau như người chơi xoay chuột,
+  // tần suất theo tốc độ quay đầu trung bình của người bị giả dạng; khi nói chuyện thì nhìn người kia.
+  updateLook(g, dt) {
+    let base;
+    if (g.focus) base = Math.atan2(-(g.focus.x - g.x), -(g.focus.z - g.z));
+    else base = g.moveYaw ?? g.yaw;
+    g.glanceT -= dt;
+    if (g.glanceT <= 0) {
+      const busy = Math.max(0.3, Math.min(3, g.turnRate || 1.2));
+      if (g.lookOff !== 0 && Math.random() < 0.6) { g.lookOff = 0; g.glanceT = rnd(0.8, 3) / busy; }
+      else {
+        const r = Math.random();
+        g.lookOff = g.focus ? (Math.random() - 0.5) * 0.5 : r < 0.12 ? Math.PI * (Math.random() < 0.5 ? 0.9 : -0.9) : (Math.random() < 0.5 ? 1 : -1) * rnd(0.4, 1.6);
+        g.glanceT = rnd(0.3, 1.1);
+      }
+      g.lookPitch = g.focus ? rnd(-0.12, 0.05) : rnd(-0.35, 0.15);
+    }
+    const target = base + g.lookOff;
+    const diff = angleDiff(g.yaw, target);
+    const maxTurn = (g.focus ? 6 : 11) * dt;   // quay nhanh như rê chuột
+    g.yaw += Math.max(-maxTurn, Math.min(maxTurn, diff * Math.min(1, dt * 14)));
+    g.pitch = damp(g.pitch || 0, g.lookPitch, 8, dt);
+  }
   updateGhost(g, dt) {
     g.stateT += dt; g.moving = false;
     // thói quen đèn pin / cúi người của người bị giả dạng
     g.habitT -= dt;
-    if (g.habitT <= 0) { g.habitT = rnd(6, 14); g.flash = Math.random() < g.flashP; g.crouch = Math.random() < g.crouchP; }
+    if (g.habitT <= 0) { g.habitT = rnd(0.5, 1.5) * g.flipEvery; g.flash = Math.random() < g.flashP; g.crouch = Math.random() < g.crouchP; }
+    g.focus = null;
     const alive = this.alivePlayers();
     let tgt = g.target ? this.players.get(g.target) : null;
     const seen = this.seenByAny(g.x, g.z, 30);
@@ -464,13 +525,14 @@ export class Host {
       case 'GRAB': {
         if (tgt) this.face(g, tgt);
         if (g.stateT >= 1.0) {
-          if (tgt) { this.kill(tgt, 'ghost', g.id); g.imp = tgt.id; }  // giả dạng người vừa chết
+          if (tgt) { this.kill(tgt, 'ghost', g.id); g.imp = tgt.id; this.applyHabits(g); }  // giả dạng người vừa chết
           this.setGhost(g, 'LEAVE');
         }
         break;
       }
       case 'DEAD': break;
     }
+    if (g.state !== 'DEAD') this.updateLook(g, dt);
   }
 
   // ================================================================= vòng lặp
@@ -493,6 +555,10 @@ export class Host {
         if (p.spd > 0.5) { s.moveN++; s.speedSum += p.spd; }
         if (p.flash) s.flashOn++;
         if (p.crouch) s.crouchN++;
+        if (p.spd > 5) s.runN++;
+        s.turnSum += Math.min(Math.PI, Math.abs(angleDiff(p.prevYaw, p.yaw)));  // rad quay trong 1 giây
+        if (p.flash !== p.prevFlash) s.flips++;
+        p.prevYaw = p.yaw; p.prevFlash = p.flash;
       }
     }
     // sinh ma: số ma tối đa theo pha, cộng thêm 1 cho mỗi người đã chết (như MIMESIS)
@@ -515,7 +581,7 @@ export class Host {
   broadcastSnap() {
     const ps = [];
     for (const p of this.players.values()) ps.push([p.id, +p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2), +p.yaw.toFixed(3), +p.pitch.toFixed(3), p.crouch ? 1 : 0, p.flash ? 1 : 0, p.alive ? 1 : 0, p.weapon, +p.spd.toFixed(1), p.hasKey ? 1 : 0, p.gun]);
-    const gs = this.ghosts.map((g) => [g.id, g.imp, +g.x.toFixed(2), +g.z.toFixed(2), +g.yaw.toFixed(3), g.crouch ? 1 : 0, g.flash ? 1 : 0, g.state === 'DEAD' ? 0 : g.state === 'GRAB' ? 2 : 1, g.moving ? +(g.curSpeed || g.speed).toFixed(1) : 0]);
+    const gs = this.ghosts.map((g) => [g.id, g.imp, +g.x.toFixed(2), +g.z.toFixed(2), +g.yaw.toFixed(3), g.crouch ? 1 : 0, g.flash ? 1 : 0, g.state === 'DEAD' ? 0 : g.state === 'GRAB' ? 2 : 1, +(g.curSpeed || 0).toFixed(1), +(g.pitch || 0).toFixed(2)]);
     const tasks = TASK_IDS.filter((t) => this.tasks[t].done);
     const locks = {};
     for (const t of TASK_IDS) if (this.tasks[t].lockUntil > this.nowSec) locks[t] = Math.ceil(this.tasks[t].lockUntil - this.nowSec);
@@ -526,7 +592,7 @@ export class Host {
     const clips = [...this.clips.values()].slice(-40).map((c) => ({ id: c.id, spk: this.players.get(c.speaker)?.name, text: c.text, intent: c.intent, heard: c.heardByGhost, dodge: c.dodge, room: c.room, task: c.task, t: +c.tGame.toFixed(1), used: c.lastUsedAt != null }));
     const msg = {
       t: 'dbg', clock: this.clock(), phase: this.phase, speed: this.speed, solo: this.solo,
-      ghosts: this.ghosts.map((g) => ({ id: g.id, state: g.state, imp: this.players.get(g.imp)?.name, target: g.target ? this.players.get(g.target)?.name : null, x: +g.x.toFixed(1), z: +g.z.toFixed(1), room: roomAt(g.x, g.z), speed: +g.speed.toFixed(2), flashP: +g.flashP.toFixed(2) })),
+      ghosts: this.ghosts.map((g) => ({ id: g.id, state: g.state, imp: this.players.get(g.imp)?.name, target: g.target ? this.players.get(g.target)?.name : null, x: +g.x.toFixed(1), z: +g.z.toFixed(1), room: roomAt(g.x, g.z), speed: +(g.curSpeed || 0).toFixed(1), flashP: +g.flashP.toFixed(2), runP: +g.runP.toFixed(2), turn: +g.turnRate.toFixed(2) })),
       players: [...this.players.values()].map((p) => ({ name: p.name, alive: p.alive, alone: +this.aloneFor(p).toFixed(0), room: roomAt(p.x, p.z), task: p.task })),
       clips, nClips: this.clips.size, lastPick: this.lastPick,
     };

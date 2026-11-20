@@ -70,7 +70,8 @@ chuột trái bắn · V push-to-talk (bật trong menu Esc; mặc định mic l
 
 ## Giới hạn đã biết
 
-- Không có TURN server: hai người sau NAT đối xứng (một số mạng 4G/công ty) có thể không nối P2P
-  được. Khi đó dữ liệu game đi đường MQTT (chậm hơn) nhưng **không nghe được giọng nhau**.
+- Không có TURN server: hai người sau NAT đối xứng (4G, CGNAT, mạng công ty) không nối P2P được. Khi đó cả
+  dữ liệu game lẫn giọng nói tự đi vòng qua MQTT (giọng μ-law 8 kHz, trễ ~0.3–0.5 s, chất lượng như điện thoại).
+  Lobby hiện trạng thái từng người: 🔗 P2P hoặc 📡 qua máy chủ. Thử đường này bằng `?p2p=0`.
 - Chủ phòng nên dùng máy khoẻ nhất và không thu nhỏ trình duyệt quá lâu.
 - Đáp án task dùng bảng tra đơn giản hoá (ghi ở đầu `tasks-logic.js`).

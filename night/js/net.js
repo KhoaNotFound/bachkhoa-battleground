@@ -28,7 +28,7 @@ export class Net {
     this.onPeerLeave = () => {};
     this.onRooms = () => {};
     this.rooms = new Map();
-    this.queue = [];
+    this.queue = []; this.bulk = [];
     this.localTrack = null;
     this.stats = { mqttOut: 0, dcOut: 0, mqttIn: 0, dcIn: 0 };
   }
@@ -102,6 +102,7 @@ export class Net {
     for (const x of list) {
       if (!x || typeof x.t !== 'string') continue;
       if (x.to && x.to !== this.id) continue;
+      if (x.tos && !x.tos.includes(this.id)) continue;
       this.handleSys(from, x, 'mqtt');
     }
   }
@@ -121,10 +122,16 @@ export class Net {
     if (h) h(from, m, via);
   }
   // ------------------------------------------------ gửi
-  mqttSend(obj) { if (this.queue.length < 120) this.queue.push(obj); }
+  // tin nhỏ (trạng thái, sự kiện, giọng đi vòng) đi trước; clip giọng (lớn) xếp hàng riêng, mỗi gói tối đa ~40 kB
+  mqttSend(obj) {
+    if (obj.t === 'clipc') { if (this.bulk.length < 600) this.bulk.push(obj); return; }
+    if (this.queue.length < 200) this.queue.push(obj);
+  }
   flush() {
-    if (!this.queue.length || !this.client?.connected || !this.room) return;
+    if ((!this.queue.length && !this.bulk.length) || !this.client?.connected || !this.room) return;
     let q = this.queue; this.queue = [];
+    let size = q.reduce((n, x) => n + (x.d ? x.d.length : 0) + 120, 0);
+    while (this.bulk.length && size + this.bulk[0].d.length < 40000) { size += this.bulk[0].d.length + 80; q.push(this.bulk.shift()); }
     // chỉ giữ trạng thái mới nhất cho các loại gửi liên tục
     const seen = new Set();
     q = q.reverse().filter((x) => { if (x.t !== 'st' && x.t !== 'snap') return true; const k = x.t + (x.to || ''); if (seen.has(k)) return false; seen.add(k); return true; }).reverse();
@@ -150,14 +157,16 @@ export class Net {
   }
   // ------------------------------------------------ WebRTC
   addPeer(id) {
-    const p = { id, lastSeen: performance.now(), polite: this.id > id, pc: null };
+    const p = { id, lastSeen: performance.now(), created: performance.now(), polite: this.id > id, pc: null };
     this.peers.set(id, p);
     this.makePC(p);
     if (!p.polite) this.negotiate(p);
     return p;
   }
   makePC(p) {
-    const pc = (p.pc = new RTCPeerConnection({ iceServers: ICE }));
+    // ?p2p=0: chặn P2P để thử đường dự phòng qua MQTT
+    const noP2P = new URLSearchParams(location.search).get('p2p') === '0';
+    const pc = (p.pc = new RTCPeerConnection(noP2P ? { iceServers: [], iceTransportPolicy: 'relay' } : { iceServers: ICE }));
     p.makingOffer = false;
     if (!p.polite) {
       p.tx = pc.addTransceiver('audio', { direction: 'sendrecv' });
@@ -218,6 +227,24 @@ export class Net {
   setLocalTrack(track) {
     this.localTrack = track;
     for (const p of this.peers.values()) if (p.tx) p.tx.sender.replaceTrack(track).catch(() => {});
+  }
+  // P2P đã nối được chưa; chưa nối sau 6 s (hoặc thất bại) thì giọng đi vòng qua MQTT
+  p2pOk(id) {
+    const p = this.peers.get(id);
+    if (!p || !p.pc) return false;
+    const ice = p.pc.iceConnectionState;
+    return p.pc.connectionState === 'connected' || ice === 'connected' || ice === 'completed';
+  }
+  relayIds() {
+    const out = [], now = performance.now();
+    for (const [id, p] of this.peers) if (p.hello && !this.p2pOk(id) && (now - p.created > 6000 || p.pc?.connectionState === 'failed')) out.push(id);
+    return out;
+  }
+  peerStatus(id) {
+    const p = this.peers.get(id);
+    if (!p) return '';
+    if (this.p2pOk(id)) return 'p2p';
+    return performance.now() - p.created > 6000 || p.pc?.connectionState === 'failed' ? 'relay' : 'connecting';
   }
   dcOpen(id) { const p = this.peers.get(id); return !!(p && p.dcR && p.dcR.readyState === 'open'); }
   dropPeer(id) {

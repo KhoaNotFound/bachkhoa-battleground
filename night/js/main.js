@@ -5,7 +5,7 @@ import { clamp, damp, lerpAngle, cleanName, escapeHtml } from '../../js/util.js'
 import { CONFIG, applyOverrides, clockText, FACULTIES, SHIRTS, DODGE_LINES } from './config.js';
 import { Net, roomCode } from './net.js';
 import { Host } from './host.js';
-import { Voice, f32ToI16, int16ToB64, b64ToInt16 } from './voice.js';
+import { Voice, f32ToI16, int16ToB64, b64ToInt16, ulawEncode } from './voice.js';
 import { TaskUI } from './tasks-ui.js';
 import { TASK_IDS, TASK_NAMES } from './tasks-logic.js';
 import { buildNightMap, SPOTS, SPAWNS, wallBetween, roomAt, ROOMS } from './map.js';
@@ -61,6 +61,19 @@ for (const t of ['snap', 'ev', 'items', 'end', 'task', 'task_r', 'task_result', 
   net.on(t, (from, m) => { if (room && !room.isHost && from === room.hostId) onFromHost(from, m); else if (t === 'joinno' || t === 'joinok' || t === 'lobby') onFromHost(from, m); });
 }
 net.on('clipc', (from, m) => onClipChunk(from, m));
+// giọng đi vòng qua MQTT cho những cặp không nối P2P được (mạng 4G, CGNAT, mạng công ty...)
+net.on('va', (from, m) => { if (typeof m.d === 'string' && m.d.length < 4000 && !net.p2pOk(from)) voice.playRelay(from, m.d); });
+let relayBuf = [];
+voice.onRelay = (f16) => {
+  if (!room) return;
+  for (let i = 0; i + 1 < f16.length; i += 2) relayBuf.push(ulawEncode((f16[i] + f16[i + 1]) * 0.5));
+  if (relayBuf.length < 960) return;  // gửi mỗi ~120 ms
+  const ids = net.relayIds();
+  const bytes = relayBuf; relayBuf = [];
+  if (!ids.length) return;
+  let s = ''; for (const b of bytes) s += String.fromCharCode(b);
+  net.mqttSend({ t: 'va', tos: ids, d: btoa(s) });
+};
 net.onPeerStream = (id, stream) => { if (voice.ctx) voice.addPeer(id, stream); else pendingStreams.set(id, stream); };
 const pendingStreams = new Map();
 net.onPeerLeave = (id) => {
@@ -207,6 +220,11 @@ setInterval(() => {
     const id = li.dataset.id;
     const lv = id === net.id ? (voice.capturing ? voice.level : 0) : voice.peerLevel(id);
     li.classList.toggle('talking', lv > 0.015);
+    if (id !== net.id) {
+      const st = net.peerStatus(id), el = li.querySelector('.link') || li.appendChild(Object.assign(document.createElement('span'), { className: 'link' }));
+      const txt = st === 'p2p' ? '🔗 P2P' : st === 'relay' ? '📡 qua máy chủ' : '… đang nối';
+      if (el.textContent !== txt) { el.textContent = txt; el.title = st === 'relay' ? 'Không nối trực tiếp được, giọng đi vòng qua máy chủ (trễ hơn một chút)' : ''; }
+    }
   }
 }, 150);
 
@@ -303,7 +321,7 @@ const chunkBuf = new Map();
 function sendClip(id, f32, dodge, text, lobby = null) {
   const i16 = f32ToI16(f32);
   voice.storeClip(id, i16);
-  const b64 = int16ToB64(i16), CH = 16000;
+  const b64 = int16ToB64(i16), CH = 12000;
   const n = Math.ceil(b64.length / CH);
   for (let k = 0; k < n; k++) net.broadcast({ t: 'clipc', id, i: k, n, d: b64.slice(k * CH, (k + 1) * CH) }, true);
   toHost({ t: 'clipm', id, dodge, lobby: !!lobby, dur: +(f32.length / 16000).toFixed(2), text: dodge ? text : undefined });
@@ -466,7 +484,7 @@ function onSnap(m) {
   }
   const seen = new Set();
   for (const a of m.gs) {
-    const [id, imp, x, z, yaw, cr, fl, st, spd] = a;
+    const [id, imp, x, z, yaw, cr, fl, st, spd, pitch] = a;
     seen.add(id);
     let g = game.ghosts.get(id);
     const impP = game.roster.find((r) => r.id === imp);
@@ -477,7 +495,7 @@ function onSnap(m) {
       game.ghosts.set(id, g);
     }
     if (g.imp !== imp && impP) { g.imp = imp; g.av.shirtMat.color.set(impP.color); }
-    g.tx = x; g.tz = z; g.tyaw = yaw; g.cr = cr; g.fl = fl; g.st = st; g.spd = spd;
+    g.tx = x; g.tz = z; g.tyaw = yaw; g.cr = cr; g.fl = fl; g.st = st; g.spd = spd; g.tpitch = pitch || 0;
   }
   for (const [id, g] of game.ghosts) if (!seen.has(id)) { g.av.dispose(); game.ghosts.delete(id); }
   renderTasks();
@@ -793,14 +811,15 @@ function frame() {
     g.x = damp(g.x, g.tx, 12, dt); g.z = damp(g.z, g.tz, 12, dt); g.yaw = lerpAngle(g.yaw, g.tyaw, 1 - Math.exp(-12 * dt));
     const dying = g.dying ? (now - g.dying) / 1200 : 0;
     g.av.root.visible = dying < 1;
-    g.av.update(dt, { x: g.x, y: 0, z: g.z, yaw: g.yaw, pitch: 0, speed: g.spd || 0, crouch: !!g.cr, weapon: 0, protected: false });
+    g.pitch = damp(g.pitch || 0, g.tpitch || 0, 12, dt);
+    g.av.update(dt, { x: g.x, y: 0, z: g.z, yaw: g.yaw, pitch: g.pitch, speed: g.spd || 0, crouch: !!g.cr, weapon: 0, protected: false });
     if (g.st === 2) g.av.arms.forEach((a) => a.rotation.set(1.5, 0, 0)); else relaxArms(g.av);
     if (dying) { g.av.root.scale.setScalar(Math.max(0.01, 1 - dying)); g.av.root.position.y = dying * 1.5; }
     const d = Math.hypot(g.x - lis.x, g.z - lis.z);
     const occ = wallBetween(lis.x, lis.z, g.x, g.z);
     g.voices = g.voices.filter((v) => voice.playing.includes(v));
     for (const v of g.voices) voice.place(v, { x: g.x, y: 1.6, z: g.z }, occ, d < cfg.R_HEAR);
-    if (g.fl && !dying) lights.push({ x: g.x, y: g.cr ? 1.0 : 1.5, z: g.z, yaw: g.yaw, pitch: -0.1, d });
+    if (g.fl && !dying) lights.push({ x: g.x, y: g.cr ? 1.0 : 1.5, z: g.z, yaw: g.yaw, pitch: g.pitch || 0, d });
     stepSound('g' + g.id, g, dt, d, g.cr ? 0 : g.spd || 0);
   }
   lights.sort((a, b) => a.d - b.d);
