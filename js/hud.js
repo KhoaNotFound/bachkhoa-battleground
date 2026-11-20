@@ -91,15 +91,50 @@ export class HUD {
     g.scale(scale, scale);
     g.translate(-this.mapX(px), -this.mapZ(pz));
     g.drawImage(this.mapImg, 0, 0);
-    // pings (enemy shots)
+    g.restore();
+    // ---- enemies and gunshots, drawn in the rotated minimap frame ----
     const now = performance.now();
+    const k = this.mapS * scale, Rm = (R - 6) / k;  // px per meter, visible radius in meters
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    const toScreen = (x, z) => { const dx = x - px, dz = z - pz; return [R + (dx * c - dz * s) * k, R + (dx * s + dz * c) * k, Math.hypot(dx, dz)]; };
+    g.save();
+    g.beginPath(); g.arc(R, R, R - 1, 0, 7); g.clip();
+    // enemies inside the minimap radius: red triangles, fainter when farther
+    if (others) for (const p of others.values()) {
+      if (!p.alive || !p.pose) continue;
+      const [sx, sy, d] = toScreen(p.pose.x, p.pose.z);
+      if (d > Rm) continue;
+      g.save();
+      g.translate(sx, sy);
+      g.rotate(yaw - (p.pose.yaw || 0));
+      g.globalAlpha = 1 - 0.7 * (d / Rm);
+      g.fillStyle = '#ff3b3b'; g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 1.2;
+      g.beginPath(); g.moveTo(0, -7); g.lineTo(5.5, 5); g.lineTo(-5.5, 5); g.closePath(); g.fill(); g.stroke();
+      g.restore();
+    }
+    // gunshots: a dot where it was if it's on the minimap, otherwise a wedge on the rim pointing
+    // toward it. Closer shots are more opaque; all fade out over 2.5 s.
     this.pings = this.pings.filter((p) => now - p.t < 2500);
     for (const p of this.pings) {
-      const a = 1 - (now - p.t) / 2500;
-      g.fillStyle = `rgba(255,70,70,${a})`;
-      g.beginPath(); g.arc(this.mapX(p.x), this.mapZ(p.z), 7 / scale, 0, 7); g.fill();
-      g.strokeStyle = `rgba(255,70,70,${a * 0.6})`; g.lineWidth = 2 / scale;
-      g.beginPath(); g.arc(this.mapX(p.x), this.mapZ(p.z), (7 + (1 - a) * 18) / scale, 0, 7); g.stroke();
+      const fade = 1 - (now - p.t) / 2500;
+      const [sx, sy, d] = toScreen(p.x, p.z);
+      const a = fade * Math.max(0.25, Math.min(1, 1 - d / 300));
+      if (d < Rm) {
+        g.fillStyle = `rgba(255,70,70,${a})`;
+        g.beginPath(); g.arc(sx, sy, 6, 0, 7); g.fill();
+        g.strokeStyle = `rgba(255,70,70,${a * 0.6})`; g.lineWidth = 2;
+        g.beginPath(); g.arc(sx, sy, 6 + (1 - fade) * 16, 0, 7); g.stroke();
+      } else {
+        const ang = Math.atan2(sy - R, sx - R), aa = Math.max(0.35, a);
+        g.strokeStyle = `rgba(0,0,0,${aa * 0.5})`; g.lineWidth = 13; g.lineCap = 'butt';
+        g.beginPath(); g.arc(R, R, R - 7, ang - 0.26, ang + 0.26); g.stroke();
+        g.strokeStyle = `rgba(255,40,40,${aa})`; g.lineWidth = 9;
+        g.beginPath(); g.arc(R, R, R - 7, ang - 0.24, ang + 0.24); g.stroke();
+        // arrow pointing out toward the shot
+        g.save(); g.translate(R + Math.cos(ang) * (R - 22), R + Math.sin(ang) * (R - 22)); g.rotate(ang + Math.PI / 2);
+        g.fillStyle = `rgba(255,40,40,${aa})`; g.beginPath(); g.moveTo(0, -7); g.lineTo(6, 4); g.lineTo(-6, 4); g.closePath(); g.fill();
+        g.restore();
+      }
     }
     g.restore();
     // player arrow (always up)

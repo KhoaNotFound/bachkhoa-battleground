@@ -25,6 +25,8 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
+import voxel_collision as vc
+
 RES = 0.5          # collision / minimap grid (m)
 CM = 0.01          # OBJ unit -> m
 GROUND_EPS = 0.15  # below this, a cell is just ground (roads sit at -0.2, campus pad at 0)
@@ -34,6 +36,7 @@ TRUNK_SAMPLE = 2.2  # tree geometry below this is trunk
 TRUNK_H = 3.0      # trunk collider height (too tall to jump onto)
 CLIMB = 1.0        # highest ledge a jump reaches (jump 6.8 m/s, gravity 21 -> 1.1 m apex)
 SKY = 400.0        # top of invisible cage pillars
+HEADROOM_SPAWN = 1.8  # spawns keep clear of anything below this
 CEIL_MARGIN = 3.5  # ceiling above the highest legit floor (jump 1.1 + body 1.8 + slack)
 
 # Material classes. The export has no .mtl, so every object (= one material) gets a color
@@ -172,6 +175,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src')
     ap.add_argument('--out', default='assets/map')
+    ap.add_argument('--debug', help='folder for diagnostic images')
     ap.add_argument('--tris', type=int, default=450000, help='triangle budget for the render mesh')
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
@@ -219,8 +223,6 @@ def main():
     loq = qz(lo)
     hiq = qz(hi)
     hiq = np.where(has, np.maximum(hiq, loq + QH), 0)
-    boxes = merge_boxes(loq, hiq, has, x0, z0)
-    print(f'collision: {W}x{H} grid, {int(has.sum())} solid cells -> {len(boxes)} boxes')
 
     # ---- campus boundary: outline of everything that is not the outer terrain ----
     cover = np.zeros((H, W), np.uint8)
@@ -257,17 +259,32 @@ def main():
         boundary.reverse()
     print(f'boundary: {len(boundary)} points')
 
-    # ---- spawns: open ground cells in the biggest reachable area, inside the boundary ----
-    inside = np.zeros((H, W), np.uint8)
-    cv2.fillPoly(inside, [c.astype(np.int32)], 1)
-    inside = ndimage.binary_erosion(inside, iterations=int(4 / RES))
-    blocked = has & (loq < 1.8)
-    free = inside & ~ndimage.binary_dilation(blocked, iterations=int(1.2 / RES))
+    # ---- voxel collision (tools/voxel_collision.py): hollow buildings, enterable openings ----
+    grid = (x0, z0, RES, W, H)
+    solid_ids = {o['id'] for o in objs} - NO_COLLIDE
+    V = vc.voxelize(objs, solid_ids, set(TREES), grid, sample_points, GROUND_EPS, TRUNK_SAMPLE, TRUNK_H)
+    runs = vc.column_runs(V)
+    del V
+    print(f'voxels: {W}x{H}x{len(runs)} runs max')
+    solid_boxes = []
+    for has_k, lo_k, hi_k in runs:
+        solid_boxes += merge_boxes(lo_k * vc.VY, hi_k * vc.VY, has_k, x0, z0)
+    any_run = runs[0][0] if runs else np.zeros((H, W), bool)
+    low_run = np.zeros((H, W), bool)
+    for has_k, lo_k, hi_k in runs:
+        low_run |= has_k & (lo_k * vc.VY < HEADROOM_SPAWN)
+
+    # ---- spawns: open ground cells in the biggest connected area, inside the boundary ----
+    inside_full = np.zeros((H, W), np.uint8)
+    cv2.fillPoly(inside_full, [c.astype(np.int32)], 1)
+    inside_full = inside_full.astype(bool)
+    inside = ndimage.binary_erosion(inside_full, iterations=int(4 / RES))
+    free = inside & ~ndimage.binary_dilation(low_run, iterations=int(1.2 / RES))
     lab, n = ndimage.label(free)
     if n:
         big = np.argmax(ndimage.sum(free, lab, range(1, n + 1))) + 1
         free = lab == big
-    open_sky = free & ~has  # nothing overhead
+    open_sky = free & ~any_run  # nothing overhead
     js, is_ = np.nonzero(open_sky)
     rng = np.random.default_rng(5150)
     spawns = []
@@ -279,39 +296,45 @@ def main():
             break
     print(f'spawns: {len(spawns)}')
 
-    # ---- virtual cage: what can a player legitimately stand on? ----
-    # BFS over cells from the spawns: walking steps up at most CLIMB (a jump), down any amount.
-    # Solid columns that are never reached get an invisible pillar up to the sky (players can't
-    # land on them via physics glitches), slab tops (walkway roofs) always do, and a ceiling
-    # sits just above the highest reachable floor.
-    column = has & (loq == 0)
-    floor_h = np.where(column, hiq, 0.0)
-    reach = np.zeros((H, W), bool)
-    from collections import deque
-    dq = deque()
-    for sx, sz in spawns:
-        j, i = int((sz - z0) / RES), int((sx - x0) / RES)
-        if not reach[j, i]:
-            reach[j, i] = True
-            dq.append((j, i))
-    inside_full = np.zeros((H, W), np.uint8)
-    cv2.fillPoly(inside_full, [c.astype(np.int32)], 1)
-    inside_full = inside_full.astype(bool)
-    while dq:
-        j, i = dq.popleft()
-        h0 = floor_h[j, i]
-        for dj, di in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            jj, ii = j + dj, i + di
-            if 0 <= jj < H and 0 <= ii < W and not reach[jj, ii] and inside_full[jj, ii] and floor_h[jj, ii] - h0 <= CLIMB:
-                reach[jj, ii] = True
-                dq.append((jj, ii))
-    pillar = column & ~reach
-    cage = merge_boxes(np.zeros((H, W)), np.full((H, W), SKY), pillar, x0, z0)
-    slab = has & (loq > 0)
-    cage += merge_boxes(hiq, np.full((H, W), SKY), slab, x0, z0)
-    max_floor = float(floor_h[reach].max()) if reach.any() else 0.0
-    ceiling = round(max_floor + CEIL_MARGIN, 2)
-    print(f'cage: {int(reach.sum())} reachable cells, max floor {max_floor} m, {len(cage)} cage boxes, ceiling {ceiling} m')
+    # ---- virtual cage on top of the voxel runs ----
+    seeds = [(int((sz - z0) / RES), int((sx - x0) / RES)) for sx, sz in spawns]
+    stand, reached, height, LOb, HI, HAS = vc.reach_and_cage(runs, grid, inside_full, seeds)
+    cage = []
+    for m, lo_l, hi_l in vc.cage_layers(stand, reached, height, LOb, HAS, inside_full):
+        cage += merge_boxes(lo_l * vc.VY, hi_l * vc.VY, m, x0, z0)
+    print(f'collision: {len(solid_boxes)} solid boxes, {len(cage)} cage boxes, '
+          f'{int(reached.sum())} reachable surfaces ({int(reached[:, :, 1:].sum())} above ground)')
+    if args.debug:  # reachability map: dark = unreachable solid, grey = open ground, green = reached ground under a roof, yellow = reached above ground
+        img = np.full((H, W, 3), 30, np.uint8)
+        img[any_run] = (90, 90, 90)
+        img[reached[:, :, 0]] = (150, 150, 150)
+        img[reached[:, :, 0] & any_run] = (60, 170, 60)
+        img[reached[:, :, 1:].any(2)] = (230, 200, 40)
+        Image.fromarray(img).save(os.path.join(args.debug, 'reach.png'))
+        # sample of reachable positions under a roof / above ground, for stress tests
+        pts = []
+        rset = {(int(j), int(i), int(height[j, i, l])) for j, i, l in zip(*np.nonzero(reached))}
+        roomy = lambda j, i, h: all((j + a, i + b, hh) in rset for a in (-1, 0, 1) for b in (-1, 0, 1) for hh in (h,))
+        for lvl in range(reached.shape[2]):
+            jj, ii = np.nonzero(reached[:, :, lvl] & (any_run if lvl == 0 else True))
+            n = 0
+            for k in np.random.default_rng(lvl).permutation(len(jj)):
+                j, i = int(jj[k]), int(ii[k]); h = int(height[j, i, lvl])
+                if not roomy(j, i, h):
+                    continue
+                pts.append([round(float(x0 + (i + 0.5) * RES), 2), round(h * vc.VY, 2), round(float(z0 + (j + 0.5) * RES), 2)])
+                n += 1
+                if n >= 60:
+                    break
+        json.dump(pts, open(os.path.join(args.debug, 'indoor_points.json'), 'w'))
+    # binary: int16 x0,y0,z0,x1,y1,z1 in 0.25 m units from (grid x0, 0, grid z0); solid first
+    U = 0.25
+    allb = np.array(solid_boxes + cage, np.float64).reshape(-1, 6)
+    q = np.round((allb - [x0, 0, z0, x0, 0, z0]) / U).astype(np.int64)
+    assert q.min() >= -32768 and q.max() < 32768
+    with open(os.path.join(args.out, 'collision.bin'), 'wb') as fh:
+        fh.write(q.astype(np.int16).tobytes())
+    collision = {'file': 'collision.bin', 'unit': U, 'solid': len(solid_boxes), 'cage': len(cage)}
 
     # ---- render mesh: decimate (only if over budget), then a material per triangle ----
     total_area = sum(o['st']['area'] for o in objs)
@@ -437,7 +460,7 @@ def main():
         'grid': {'x0': x0, 'z0': z0, 'res': RES, 'w': W, 'h': H},
         'bbox': [round(float(min(p[0] for p in boundary)), 2), round(float(min(p[1] for p in boundary)), 2),
                  round(float(max(p[0] for p in boundary)), 2), round(float(max(p[1] for p in boundary)), 2)],
-        'materials': mats, 'gate': lm.get('gate'), 'boundary': boundary, 'spawns': spawns, 'boxes': boxes, 'cage': cage, 'ceiling': ceiling,
+        'materials': mats, 'gate': lm.get('gate'), 'boundary': boundary, 'spawns': spawns, 'collision': collision,
     }
     with open(os.path.join(args.out, 'campus.json'), 'w') as fh:
         json.dump(meta, fh, separators=(',', ':'))

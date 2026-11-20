@@ -59,11 +59,14 @@ const sunDir = new THREE.Vector3(0.45, 0.8, 0.35).normalize();
   const g = new THREE.SphereGeometry(1500, 32, 16);
   const m = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { top: { value: new THREE.Color(0x3d86d6) }, horizon: { value: new THREE.Color(0xd4e6f4) }, bottom: { value: new THREE.Color(0x9fb3c2) }, sunDir: { value: sunDir } },
+    uniforms: { top: { value: new THREE.Color(0x3d86d6) }, horizon: { value: new THREE.Color(0xd4e6f4) }, bottom: { value: new THREE.Color(0x9fb3c2) }, sunDir: { value: sunDir }, moonDir: { value: new THREE.Vector3(0, 1, 0) }, night: { value: 0 } },
     vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position = p.xyww; }',
-    fragmentShader: `uniform vec3 top, horizon, bottom, sunDir; varying vec3 vDir;
-      void main(){ float h = vDir.y; vec3 c = mix(horizon, top, pow(max(h,0.0),0.55)); c = mix(c, bottom, clamp(-h*5.0,0.0,1.0));
-      float s = max(dot(normalize(vDir), sunDir), 0.0); c += vec3(1.0,0.92,0.75) * (pow(s, 900.0) * 6.0 + pow(s, 12.0) * 0.25);
+    fragmentShader: `uniform vec3 top, horizon, bottom, sunDir, moonDir; uniform float night; varying vec3 vDir;
+      float hash(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 45.164))) * 43758.5453); }
+      void main(){ vec3 d = normalize(vDir); float h = d.y; vec3 c = mix(horizon, top, pow(max(h,0.0),0.55)); c = mix(c, bottom, clamp(-h*5.0,0.0,1.0));
+      float s = max(dot(d, sunDir), 0.0); c += vec3(1.0,0.92,0.75) * (pow(s, 900.0) * 6.0 + pow(s, 12.0) * 0.25) * smoothstep(-0.12, 0.04, sunDir.y);
+      float m = max(dot(d, moonDir), 0.0); c += vec3(0.86,0.9,1.0) * (smoothstep(0.99935, 0.99965, m) * 1.4 + pow(m, 80.0) * 0.12) * night;
+      vec3 g = floor(d * 420.0); c += vec3(step(0.9975, hash(g)) * (0.5 + 0.5 * hash(g + 1.0))) * night * smoothstep(0.02, 0.3, h);
       gl_FragColor = vec4(c, 1.0); }`,
   });
   const sky = new THREE.Mesh(g, m);
@@ -87,6 +90,41 @@ function setShadowArea(r) {
   c.updateProjectionMatrix();
 }
 setShadowArea(75);
+
+// ---------------- day / night ----------------
+// One cycle every 10 real minutes, from the wall clock so every player sees the same time.
+// Phase 0 = sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight. ?daytime=0.75 forces a phase (testing).
+const DAY_MS = 10 * 60 * 1000;
+const forcedPhase = qs.has('daytime') ? (+qs.get('daytime') % 1 + 1) % 1 : null;
+const lightDir = new THREE.Vector3(), moonDir = new THREE.Vector3();
+const DN = {
+  dayTop: new THREE.Color(0x3d86d6), dayHor: new THREE.Color(0xd4e6f4), dayBot: new THREE.Color(0x9fb3c2),
+  nightTop: new THREE.Color(0x040916), nightHor: new THREE.Color(0x18243c), nightBot: new THREE.Color(0x0a0f18),
+  dusk: new THREE.Color(0xf09a5a), sunCol: new THREE.Color(0xfff0d8), moonCol: new THREE.Color(0xa9c2ff),
+  hemiSkyDay: new THREE.Color(0xcfe6ff), hemiSkyNight: new THREE.Color(0x3b4f80), hemiGndDay: new THREE.Color(0x7a7563), hemiGndNight: new THREE.Color(0x1b1d24),
+};
+const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+function updateDayNight() {
+  const ph = forcedPhase ?? (Date.now() % DAY_MS) / DAY_MS;
+  const a = ph * Math.PI * 2;
+  sunDir.set(Math.cos(a), Math.sin(a), 0.35).normalize();
+  moonDir.set(-sunDir.x, -sunDir.y, 0.3).normalize();
+  const e = sunDir.y, day = sstep(-0.12, 0.22, e), dusk = Math.max(0, 1 - Math.abs(e) / 0.25);
+  // one shadow-casting light: the sun by day, the moon by night
+  if (e > -0.05) { lightDir.copy(sunDir); sun.color.copy(DN.sunCol).lerp(DN.dusk, dusk * 0.55); sun.intensity = 2.6 * sstep(-0.05, 0.2, e); }
+  else { lightDir.copy(moonDir); sun.color.copy(DN.moonCol); sun.intensity = 0.75 * sstep(-0.05, -0.25, e); }
+  hemi.intensity = 0.7 + 0.65 * day;
+  hemi.color.copy(DN.hemiSkyNight).lerp(DN.hemiSkyDay, day);
+  hemi.groundColor.copy(DN.hemiGndNight).lerp(DN.hemiGndDay, day);
+  const u = scene.userData.sky.material.uniforms;
+  u.top.value.copy(DN.nightTop).lerp(DN.dayTop, day);
+  u.horizon.value.copy(DN.nightHor).lerp(DN.dayHor, day).lerp(DN.dusk, dusk * 0.45);
+  u.bottom.value.copy(DN.nightBot).lerp(DN.dayBot, day);
+  u.moonDir.value.copy(moonDir);
+  u.night.value = 1 - day;
+  scene.fog.color.copy(u.horizon.value);
+  scene.userData.cloudMat?.emissive.setHex(0x8899aa).multiplyScalar(0.12 + 0.88 * day);
+}
 
 // ---------------- systems ----------------
 const world = new CollisionWorld(8);
@@ -905,7 +943,8 @@ function frame() {
   const focus = state === 'lobby' ? new THREE.Vector3(map.center.x, 0, map.center.z) : state === 'dead' ? deathPos : state === 'inspect' ? camera.position : me.pos;
   setShadowArea(state === 'lobby' ? 210 : state === 'inspect' ? 140 : 75);
   sun.target.position.set(Math.round(focus.x), 0, Math.round(focus.z));
-  sun.position.copy(sun.target.position).addScaledVector(sunDir, 220);
+  updateDayNight();
+  sun.position.copy(sun.target.position).addScaledVector(lightDir, 220);
   scene.userData.sky.position.copy(camera.position);
 
   vfx.update(dt, camera);
@@ -951,4 +990,4 @@ function frame() {
 }
 
 // test hooks
-window.__game = { audio, get chat() { return chat; }, get inspector() { return inspector; }, me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
+window.__game = { audio, get hud() { return hud; }, get chat() { return chat; }, get inspector() { return inspector; }, me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };

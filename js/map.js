@@ -103,13 +103,18 @@ export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}
   }
 
   // ---------- collision ----------
-  for (const b of meta.boxes) world.add(b[0], b[1], b[2], b[3], b[4], b[5], { mat: 'concrete' });
-  // virtual cage (tools/build_obj_map.py): invisible pillars over everything a player can't
-  // legitimately reach, plus a ceiling. They block movement only, never bullets.
-  for (const b of meta.cage || []) world.add(b[0], b[1], b[2], b[3], b[4], b[5], { bullet: false, mat: 'none' });
-  if (meta.ceiling) {
-    const g = meta.grid;
-    world.add(g.x0, meta.ceiling, g.z0, g.x0 + g.w * g.res, 400, g.z0 + g.h * g.res, { bullet: false, mat: 'none' });
+  // collision.bin (tools/build_obj_map.py + voxel_collision.py): int16 boxes in 0.25 m units from
+  // the grid origin. Solid boxes first (block movement and bullets), then the virtual cage:
+  // movement-only boxes over unreachable surfaces and ceilings over open sky.
+  {
+    const c = meta.collision, g = meta.grid;
+    const buf = await fetch(new URL(c.file, BASE)).then((r) => r.arrayBuffer());
+    const q = new Int16Array(buf), U = c.unit;
+    for (let i = 0, n = 0; i < q.length; i += 6, n++) {
+      const solid = n < c.solid;
+      world.add(g.x0 + q[i] * U, q[i + 1] * U, g.z0 + q[i + 2] * U, g.x0 + q[i + 3] * U, q[i + 4] * U, g.z0 + q[i + 5] * U,
+        solid ? { mat: 'concrete' } : { bullet: false, mat: 'none' });
+    }
   }
   // invisible tall wall along the campus boundary so nobody leaves
   const WB = CAMPUS_POLY;
@@ -139,6 +144,7 @@ export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}
       for (let j = 0; j < 4; j++) { const r = 10 + crng() * 14; m4.compose(p.set(cx + (j - 1.5) * r * 0.9, cy + crng() * 6, cz + crng() * 10), qt, s.set(r * 1.4, r * 0.6, r)); clouds.setMatrixAt(k++, m4); }
     }
     scene.add(clouds);
+    scene.userData.cloudMat = clouds.material;  // dimmed at night by main.js
   }
 
   await mmReady;
