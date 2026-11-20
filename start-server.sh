@@ -9,13 +9,13 @@ mkdir -p .tunnel
 
 if [ ! -d server/node_modules ]; then (cd server && npm install --silent); fi
 
-pkill -f "node server.js" 2>/dev/null || true
-pkill -f "cloudflared tunnel --url http://localhost:$PORT" 2>/dev/null || true
+pkill -f "[n]ode server.js" 2>/dev/null || true
+pkill -f "[c]loudflared tunnel --no-autoupdate --url http://localhost:$PORT" 2>/dev/null || true
 sleep 1
 
-(cd server && PORT="$PORT" setsid nohup node server.js > ../.tunnel/server.log 2>&1 &)
+(cd server && PORT="$PORT" setsid nohup node server.js > ../.tunnel/server.log 2>&1 < /dev/null &)
 sleep 1
-setsid nohup cloudflared tunnel --no-autoupdate --url "http://localhost:$PORT" > .tunnel/cloudflared.log 2>&1 &
+setsid nohup cloudflared tunnel --no-autoupdate --url "http://localhost:$PORT" > .tunnel/cloudflared.log 2>&1 < /dev/null &
 
 URL=""
 for i in $(seq 1 60); do

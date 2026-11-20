@@ -19,30 +19,31 @@ export class HUD {
   }
   buildMapImage(d) {
     const S = 3; // px per meter
-    const W = (BOUNDS.x1 - BOUNDS.x0 + 40) * S, H = (BOUNDS.z1 - BOUNDS.z0 + 40) * S;
+    const pad = 30;
+    const W = (BOUNDS.x1 - BOUNDS.x0 + pad * 2) * S, H = (BOUNDS.z1 - BOUNDS.z0 + pad * 2) * S;
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
     const g = c.getContext('2d');
-    const X = (x) => (x - BOUNDS.x0 + 20) * S, Z = (z) => (z - BOUNDS.z0 + 20) * S;
+    const X = (x) => (x - BOUNDS.x0 + pad) * S, Z = (z) => (z - BOUNDS.z0 + pad) * S;
+    const path = (P) => { g.beginPath(); P.forEach((p, i) => (i ? g.lineTo(X(p[0]), Z(p[1])) : g.moveTo(X(p[0]), Z(p[1])))); g.closePath(); };
     g.fillStyle = '#2b3138'; g.fillRect(0, 0, W, H);
-    g.fillStyle = '#3c434b'; g.fillRect(X(BOUNDS.x0), Z(BOUNDS.z0), (BOUNDS.x1 - BOUNDS.x0) * S, (BOUNDS.z1 - BOUNDS.z0) * S);
-    g.fillStyle = '#6b6f6c';
-    for (const p of d.pads) g.fillRect(X(p[0]), Z(p[1]), (p[2] - p[0]) * S, (p[3] - p[1]) * S);
-    g.fillStyle = '#4e7f3b';
-    for (const p of d.grass) g.fillRect(X(p[0]), Z(p[1]), (p[2] - p[0]) * S, (p[3] - p[1]) * S);
+    path(d.boundary); g.fillStyle = '#6b6f6c'; g.fill();
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    for (const r of d.roads) { g.strokeStyle = '#3c434b'; g.lineWidth = r.w * S; g.beginPath(); r.p.forEach((p, i) => (i ? g.lineTo(X(p[0]), Z(p[1])) : g.moveTo(X(p[0]), Z(p[1])))); g.stroke(); }
+    for (const p of d.pitches) { path(p.p); g.fillStyle = p.s === 'soccer' ? '#4e8f3b' : '#c27a46'; g.fill(); }
     g.fillStyle = 'rgba(52,110,48,0.9)';
     for (const t of d.trees) { g.beginPath(); g.arc(X(t[0]), Z(t[1]), t[2] * S * 0.7, 0, 7); g.fill(); }
-    const roofCol = { red: '#d9765f', blue: '#8fb7da', grey: '#b5b9bc', green: '#6fd391', solar: '#46598a', concrete: '#c9c8c0', stair: '#e6d7a8', car: '#8d96a0', shed: '#7fa7c4', bleacher: '#3f7fc0' };
-    for (const r of d.rects) {
-      g.fillStyle = roofCol[r.roof] || '#bbb';
-      g.fillRect(X(r.x0), Z(r.z0), (r.x1 - r.x0) * S, (r.z1 - r.z0) * S);
-      if (r.h > 4) { g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 2; g.strokeRect(X(r.x0), Z(r.z0), (r.x1 - r.x0) * S, (r.z1 - r.z0) * S); }
+    g.fillStyle = '#8d96a0';
+    for (const p of d.props) { path(p); g.fill(); }
+    const roofCol = { red: '#d9765f', blue: '#8fb7da', grey: '#b5b9bc', green: '#6fd391', solar: '#46598a', concrete: '#c9c8c0', stair: '#e6d7a8', shed: '#7fa7c4' };
+    for (const b of d.buildings) {
+      path(b.p); g.fillStyle = roofCol[b.roof] || '#bbb'; g.fill();
+      if (b.h > 4) { g.strokeStyle = 'rgba(0,0,0,0.4)'; g.lineWidth = 2; g.stroke(); }
     }
-    g.strokeStyle = '#d8cba5'; g.lineWidth = 3;
-    g.strokeRect(X(BOUNDS.x0), Z(BOUNDS.z0), (BOUNDS.x1 - BOUNDS.x0) * S, (BOUNDS.z1 - BOUNDS.z0) * S);
-    g.font = '700 22px "Chakra Petch", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    path(d.boundary); g.strokeStyle = '#d8cba5'; g.lineWidth = 4; g.stroke();
+    g.font = '700 20px "Chakra Petch", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
     for (const l of d.labels) {
-      g.fillStyle = 'rgba(0,0,0,0.55)'; g.fillText(l.name, X(l.x) + 1.5, Z(l.z) + 1.5);
+      g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillText(l.name, X(l.x) + 1.5, Z(l.z) + 1.5);
       g.fillStyle = '#fff'; g.fillText(l.name, X(l.x), Z(l.z));
     }
     this.mapImg = c; this.mapS = S; this.mapX = X; this.mapZ = Z;

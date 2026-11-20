@@ -36,4 +36,8 @@ Rooms: append `?room=name` to the URL to create a private room.
 
 ## Map
 
-All geometry is generated in code (`js/map.js`). The layout follows the campus plan; the Portcoast Sketchfab model was used only as a visual reference and is not redistributed.
+Building footprints, the campus boundary, roads and sports pitches come from **OpenStreetMap** (© OpenStreetMap contributors, ODbL),
+converted by `tools/build_campus.py` into `js/campus-data.js` (rotated so the street grid is axis-aligned, scaled to 70% for a ~10 player match).
+Heights, facades, trees, stairs and props are generated in `js/map.js`. The Portcoast Sketchfab model was only used as a visual reference and is not redistributed.
+
+To refresh the data, re-download the Overpass extract into `tools/osm-campus.json` and run `python3 tools/build_campus.py`.
