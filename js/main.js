@@ -115,7 +115,7 @@ const feed = [];
   try {
     setLoad(10, 'Đang dựng khuôn viên trường…');
     await nextFrame();
-    map = buildMap(scene, world, { lowGfx: settings.low });
+    map = await buildMap(scene, world, { lowGfx: settings.low, onProgress: (p) => setLoad(p, 'Đang dựng khuôn viên trường…') });
     setLoad(55, 'Đang chuẩn bị vũ khí…');
     await nextFrame();
     hud = new HUD(map.minimap);
@@ -202,7 +202,7 @@ function setupLobby() {
   $('leaveBtn').onclick = () => { leaveToLobby(); };
   if (matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches) $('mobileWarn').classList.remove('hidden');
   const credit = document.querySelector('.credit');
-  credit.innerHTML += ' · Tham khảo bố cục: <a href="https://sketchfab.com/3d-models/truong-dai-hoc-bach-khoa-631462b7ccd5432a88ccea48a85aeb0e" target="_blank" rel="noopener" style="color:#8fc7ff;pointer-events:auto">mô hình của PORTCOAST trên Sketchfab</a>';
+  credit.innerHTML += ' · Mô hình 3D: <a href="https://sketchfab.com/3d-models/truong-dai-hoc-bach-khoa-631462b7ccd5432a88ccea48a85aeb0e" target="_blank" rel="noopener" style="color:#8fc7ff;pointer-events:auto">mô hình của PORTCOAST trên Sketchfab</a>';
   renderLobby();
 }
 function renderLobby() {
@@ -828,7 +828,7 @@ let lobbyAngle = 0.6;
 function lobbyCam(dt) {
   lobbyAngle += dt * 0.035;
   const c = map ? map.center : { x: 0, z: 0 };
-  camera.position.set(c.x + Math.cos(lobbyAngle) * 210, 95, c.z + Math.sin(lobbyAngle) * 185);
+  camera.position.set(c.x + Math.cos(lobbyAngle) * 320, 150, c.z + Math.sin(lobbyAngle) * 270);
   camera.lookAt(c.x, 0, c.z);
   if (camera.fov !== 55) { camera.fov = 55; camera.updateProjectionMatrix(); }
 }

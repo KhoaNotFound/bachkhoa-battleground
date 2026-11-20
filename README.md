@@ -36,8 +36,12 @@ Rooms: append `?room=name` to the URL to create a private room.
 
 ## Map
 
-Building footprints, the campus boundary, roads and sports pitches come from **OpenStreetMap** (© OpenStreetMap contributors, ODbL),
-converted by `tools/build_campus.py` into `js/campus-data.js` (rotated so the street grid is axis-aligned, scaled to 70% for a ~10 player match).
-Heights, facades, trees, stairs and props are generated in `js/map.js`. The Portcoast Sketchfab model was only used as a visual reference and is not redistributed.
+The campus is the 3D model "Truong Dai Hoc Bach Khoa" by PORTCOAST on Sketchfab, exported as OBJ and converted by
+`tools/build_obj_map.py` into `assets/map/` (quantized geometry, collision boxes, boundary, spawn points, minimap image), at real scale (~560 × 450 m).
 
-To refresh the data, re-download the Overpass extract into `tools/osm-campus.json` and run `python3 tools/build_campus.py`.
+```bash
+uv venv tools/.venv && uv pip install --python tools/.venv/bin/python numpy scipy pillow opencv-python-headless fast-simplification
+tools/.venv/bin/python tools/build_obj_map.py "<folder with model_N.obj>"
+```
+
+`tools/extract_frames.py` extracts frames from a campus video (PyAV) for photogrammetry / depth experiments.

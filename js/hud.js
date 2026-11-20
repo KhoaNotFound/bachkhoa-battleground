@@ -27,7 +27,11 @@ export class HUD {
     const X = (x) => (x - BOUNDS.x0 + pad) * S, Z = (z) => (z - BOUNDS.z0 + pad) * S;
     const path = (P) => { g.beginPath(); P.forEach((p, i) => (i ? g.lineTo(X(p[0]), Z(p[1])) : g.moveTo(X(p[0]), Z(p[1])))); g.closePath(); };
     g.fillStyle = '#2b3138'; g.fillRect(0, 0, W, H);
-    path(d.boundary); g.fillStyle = '#6b6f6c'; g.fill();
+    if (d.image) {
+      // pre-rendered top-down view (tools/build_obj_map.py)
+      const m = d.image;
+      g.drawImage(m.img, X(m.x0), Z(m.z0), (m.x1 - m.x0) * S, (m.z1 - m.z0) * S);
+    } else { path(d.boundary); g.fillStyle = '#6b6f6c'; g.fill(); }
     g.lineCap = 'round'; g.lineJoin = 'round';
     for (const r of d.roads) { g.strokeStyle = '#3c434b'; g.lineWidth = r.w * S; g.beginPath(); r.p.forEach((p, i) => (i ? g.lineTo(X(p[0]), Z(p[1])) : g.moveTo(X(p[0]), Z(p[1])))); g.stroke(); }
     for (const p of d.pitches) { path(p.p); g.fillStyle = p.s === 'soccer' ? '#4e8f3b' : '#c27a46'; g.fill(); }
