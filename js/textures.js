@@ -46,6 +46,10 @@ export function facade(style) {
     city1:    { wall: '#d9cdb8', win: '#57708a', frame: '#efe6d6', cols: 3 },
     city2:    { wall: '#b8c4cc', win: '#4f6a85', frame: '#dfe6ea', cols: 2 },
     city3:    { wall: '#e6b9a0', win: '#5b7591', frame: '#f4dccd', cols: 2 },
+    // landmark buildings, colors from reference photos
+    a2:       { wall: '#f1f3f5', win: '#2f6fb5', frame: '#ffffff', cols: 2 },
+    a4:       { wall: '#e4e6e3', win: '#6a727c', frame: '#f6f6f4', cols: 2 },
+    a5:       { wall: '#b7d0ec', win: '#34465c', frame: '#c9dcf1', cols: 3 },
   }[style];
   g.fillStyle = s.wall; g.fillRect(0, 0, W, H);
   noise(g, W, H, 10);
@@ -72,6 +76,9 @@ export function facade(style) {
     for (let x = 0; x < W; x += 8) { g.fillStyle = x % 16 ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.12)'; g.fillRect(x, 0, 4, H); }
     g.fillStyle = s.win; g.fillRect(0, 40, W, 34);
     g.fillStyle = 'rgba(255,255,255,0.25)'; g.fillRect(0, 40, W, 8);
+  } else if (style === 'a5') {
+    // light blue hall: narrow dark vertical slits
+    for (let i = 0; i < 4; i++) { g.fillStyle = s.win; g.fillRect(i * 64 + 26, 40, 12, 140); g.fillStyle = 'rgba(255,255,255,0.15)'; g.fillRect(i * 64 + 26, 40, 3, 140); }
   } else {
     const cols = s.cols, ww = W / cols;
     for (let i = 0; i < cols; i++) {
@@ -83,9 +90,11 @@ export function facade(style) {
       g.fillStyle = 'rgba(255,255,255,0.22)'; g.fillRect(x, y, w * 0.28, h);
       g.fillStyle = s.frame; g.fillRect(x + w / 2 - 2, y, 4, h); g.fillRect(x, y + h * 0.35, w, 3);
       // AC unit sometimes
-      if (style !== 'yellow' && rng() < 0.25) { g.fillStyle = '#d9dcde'; g.fillRect(x + w * 0.6, y + h + 12, 30, 20); }
+      if (style !== 'yellow' && style !== 'a2' && rng() < 0.25) { g.fillStyle = '#d9dcde'; g.fillRect(x + w * 0.6, y + h + 12, 30, 20); }
     }
   }
+  if (style === 'a2') { g.fillStyle = '#1f4fa8'; g.fillRect(0, 0, 12, H); g.fillRect(W - 12, 0, 12, H); }  // blue columns
+  if (style === 'a4') { g.fillStyle = 'rgba(0,0,0,0.12)'; for (let y = 60; y < 170; y += 9) g.fillRect(30, y, 196, 2); }  // shutters
   // floor slab line
   g.fillStyle = 'rgba(0,0,0,0.16)'; g.fillRect(0, H - 8, W, 8);
   g.fillStyle = 'rgba(255,255,255,0.15)'; g.fillRect(0, H - 10, W, 2);
@@ -182,8 +191,10 @@ export function signText(lines, { w = 1024, h = 160, bg = '#0b3d91', fg = '#ffff
   g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle';
   const n = lines.length;
   lines.forEach((ln, i) => {
-    const size = i === 0 ? h * (n > 1 ? 0.38 : 0.62) : h * 0.22;
+    let size = i === 0 ? h * (n > 1 ? 0.38 : 0.62) : h * 0.22;
     g.font = `800 ${size}px "${font}", sans-serif`;
+    const mw = g.measureText(ln).width;  // shrink long lines to fit
+    if (mw > w * 0.92) { size *= (w * 0.92) / mw; g.font = `800 ${size}px "${font}", sans-serif`; }
     g.fillText(ln, w / 2, n > 1 ? (i === 0 ? h * 0.38 : h * 0.78) : h / 2);
   });
   return tex(c, false);

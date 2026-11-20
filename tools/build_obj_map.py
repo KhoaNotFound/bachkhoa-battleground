@@ -47,9 +47,9 @@ OVERRIDE = {41: '#e3dccb'}  # walls / building shells
 # textured ground surfaces
 GROUND_KIND = {15: 'asphalt', 34: 'pavers', 7: 'grass', 77: 'grass', 21: 'pitch'}  # 21 = big football field
 # per-building styles (textures.js facade() styles / roof colors), weighted toward the campus look
-FACADES = ['cream', 'yellow', 'white', 'grey', 'corridor']
-FACADE_W = [0.3, 0.25, 0.2, 0.1, 0.15]
-FACADE_COL = {'cream': '#ece3cf', 'yellow': '#e9cf8c', 'white': '#eef1f3', 'grey': '#c3c7c9', 'corridor': '#e8e2d2'}
+FACADES = ['cream', 'yellow', 'white', 'grey', 'corridor', 'a2', 'a4', 'a5']  # a2/a4/a5: landmark-only styles
+FACADE_W = [0.3, 0.25, 0.2, 0.1, 0.15, 0, 0, 0]
+FACADE_COL = {'cream': '#ece3cf', 'yellow': '#e9cf8c', 'white': '#eef1f3', 'grey': '#c3c7c9', 'corridor': '#e8e2d2', 'a2': '#f1f3f5', 'a4': '#e4e6e3', 'a5': '#b7d0ec'}
 ROOFS = [('#c8664e', 'tile'), ('#b9bdbf', 'flat'), ('#8fb4d4', 'metal'), ('#cfcfc8', 'flat')]
 ROOF_W = [0.35, 0.25, 0.2, 0.2]
 KIND_COL = {'pitch': '#55a242', 'asphalt': '#4a4f55', 'pavers': '#bdbdb5', 'grass': '#5f9a45', 'concrete': '#cfccc2'}
@@ -233,10 +233,22 @@ def main():
         iz = ((P[:, 2] - z0) / RES).astype(int)
         ok = (ix >= 0) & (ix < W) & (iz >= 0) & (iz < H)
         cover[iz[ok], ix[ok]] = 1
-    cover = ndimage.binary_closing(cover, iterations=6).astype(np.uint8)
+    # close generously: roads (e.g. the main road from the gate) have no geometry of their own
+    # and would otherwise cut deep slots out of the playable area
+    cover = ndimage.binary_closing(np.pad(cover, 40), iterations=30)[40:-40, 40:-40].astype(np.uint8)
     cover = ndimage.binary_fill_holes(cover).astype(np.uint8)
     cnts, _ = cv2.findContours(cover, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     c = max(cnts, key=cv2.contourArea)
+    # the forecourt in front of the main gate is a recess with no geometry: fill it with the
+    # convex hull of the outline around the gate so the gate is inside the playable area
+    lm = json.load(open(os.path.join(os.path.dirname(__file__), 'landmarks.json')))
+    if lm.get('gate'):
+        gx, gz = (lm['gate']['x'] - x0) / RES, (lm['gate']['z'] - z0) / RES
+        near = c[:, 0, :][np.hypot(c[:, 0, 0] - gx, c[:, 0, 1] - gz) < 70 / RES]
+        if len(near) >= 3:
+            cv2.fillPoly(cover, [cv2.convexHull(near.astype(np.int32))], 1)
+            cnts, _ = cv2.findContours(cover, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            c = max(cnts, key=cv2.contourArea)
     c = cv2.approxPolyDP(c, 4 / RES, True)[:, 0, :]
     boundary = [[round(x0 + (p[0] + 0.5) * RES, 2), round(z0 + (p[1] + 0.5) * RES, 2)] for p in c]
     # keep CCW in x/z like the rest of the code (positive signed area)
@@ -313,6 +325,20 @@ def main():
     brng = np.random.default_rng(268)
     bfac = brng.choice(len(FACADES), nb + 1, p=FACADE_W)
     broof = brng.choice(len(ROOFS), nb + 1, p=ROOF_W)
+    roofs = list(ROOFS)
+    # landmark buildings (tools/landmarks.json): the label covering most of the footprint
+    for name, b in lm['buildings'].items():
+        mask = np.zeros((H, W), np.uint8)
+        cv2.fillPoly(mask, [((np.array(b['poly']) - [x0, z0]) / RES).astype(np.int32)], 1)
+        labs = blab[(mask > 0) & (blab > 0)]
+        if not len(labs):
+            print('  landmark not found', name)
+            continue
+        k = np.bincount(labs).argmax()
+        bfac[k] = FACADES.index(b['facade'])
+        roofs.append(tuple(b['roof']))
+        broof[k] = len(roofs) - 1
+        print(f'  landmark {name}: building label {k}')
 
     mats, mat_ids = [], {}
 
@@ -359,7 +385,7 @@ def main():
                     m[wall & (lb == k) & wide] = mat('facade', None, style)
                     m[wall & (lb == k) & ~wide] = mat('plain', FACADE_COL[style])
                 for k in np.unique(lb[rf]):
-                    col, pat = ROOFS[broof[k]]
+                    col, pat = roofs[broof[k]]
                     m[rf & (lb == k)] = mat('roof', col, pat)
         tri_pos.append(T)
         tri_mat.append(m)
@@ -411,7 +437,7 @@ def main():
         'grid': {'x0': x0, 'z0': z0, 'res': RES, 'w': W, 'h': H},
         'bbox': [round(float(min(p[0] for p in boundary)), 2), round(float(min(p[1] for p in boundary)), 2),
                  round(float(max(p[0] for p in boundary)), 2), round(float(max(p[1] for p in boundary)), 2)],
-        'materials': mats, 'boundary': boundary, 'spawns': spawns, 'boxes': boxes, 'cage': cage, 'ceiling': ceiling,
+        'materials': mats, 'gate': lm.get('gate'), 'boundary': boundary, 'spawns': spawns, 'boxes': boxes, 'cage': cage, 'ceiling': ceiling,
     }
     with open(os.path.join(args.out, 'campus.json'), 'w') as fh:
         json.dump(meta, fh, separators=(',', ':'))

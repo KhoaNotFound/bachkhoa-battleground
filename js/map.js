@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mulberry32 } from './util.js';
 import { pointInPoly } from './physics.js';
 import * as TX from './textures.js';
+import { buildGate } from './landmarks.js';
 
 // Map loaded from the campus OBJ export, converted by tools/build_obj_map.py into
 // assets/map/campus.{bin,json} + minimap.png. Coordinates are meters, Y up.
@@ -119,6 +120,9 @@ export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}
     const u = [ex / len, ez / len], n = [ez / len, -ex / len];
     world.addPrism(edgeRect(a, u, n, -1, len + 1, 0, 3), -5, 400, { bullet: false, mat: 'none' });
   }
+
+  // ---------- landmarks ----------
+  if (meta.gate) buildGate(scene, world, CAMPUS_POLY, meta.gate);
 
   // ---------- spawns (precomputed on reachable open ground) ----------
   const spawns = meta.spawns.filter(([x, z]) => pointInPoly(x, z, CAMPUS_POLY)).map(([x, z]) => ({ x, y: 0, z }));
