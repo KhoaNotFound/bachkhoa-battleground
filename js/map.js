@@ -38,7 +38,7 @@ export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}
   const q = new Uint16Array(bin);
   const texFor = {
     facade: (m) => TX.facade(m.style), roof: (m) => TX.roof(m.color, m.style),
-    asphalt: () => TX.asphalt(), pavers: () => TX.pavers(), grass: () => TX.grass(), concrete: () => TX.roof('#cfccc2'),
+    pitch: (m) => TX.field(m.bbox[2] - m.bbox[0], m.bbox[3] - m.bbox[1]), asphalt: () => TX.asphalt(), pavers: () => TX.pavers(), grass: () => TX.grass(), concrete: () => TX.roof('#cfccc2'),
   };
   const TILE = { facade: 4, roof: 4, asphalt: 6, pavers: 4, grass: 6, concrete: 4 };
   const FLOOR_H = 3.9;
@@ -66,7 +66,8 @@ export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}
       const anx = Math.abs(nx), any = Math.abs(ny), anz = Math.abs(nz);
       for (let k = 0, u = t * 6; k < 3; k++, u += 2) {
         const x = pos[o + k * 3], y = pos[o + k * 3 + 1], z = pos[o + k * 3 + 2];
-        if (any >= anx && any >= anz) { uv[u] = x / tile; uv[u + 1] = -z / tile; }
+        if (mt.bbox) { uv[u] = (x - mt.bbox[0]) / (mt.bbox[2] - mt.bbox[0]); uv[u + 1] = 1 - (z - mt.bbox[1]) / (mt.bbox[3] - mt.bbox[1]); }
+        else if (any >= anx && any >= anz) { uv[u] = x / tile; uv[u + 1] = -z / tile; }
         else {
           uv[u] = (anx > anz ? z * Math.sign(nx) : -x * Math.sign(nz)) / tile;
           uv[u + 1] = y / (mt.kind === 'facade' ? FLOOR_H : tile);

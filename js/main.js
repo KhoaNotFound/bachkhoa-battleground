@@ -7,6 +7,7 @@ import { VFX } from './vfx.js';
 import { Audio } from './audio.js';
 import { Net } from './net.js';
 import { HUD } from './hud.js';
+import { Inspector, loadAdminKey } from './admin.js';
 import { clamp, damp, lerp, lerpAngle, angleDiff, cleanName, escapeHtml, r2, r3 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -173,7 +174,7 @@ function updateNetBadge() {
 function setupLobby() {
   const nameInput = $('nameInput');
   nameInput.value = settings.name;
-  nameInput.addEventListener('input', () => { settings.name = nameInput.value; saveSettings(); });
+  nameInput.addEventListener('input', () => { settings.name = nameInput.value; saveSettings(); updateAdminBtn(); });
   nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('playBtn').click(); e.stopPropagation(); });
   const row = $('colorRow');
   for (const c of COLORS) {
@@ -199,6 +200,13 @@ function setupLobby() {
   low.onchange = () => { settings.low = low.checked; saveSettings(); location.reload(); };
   $('playBtn').onclick = () => { if (!net.connected) return; audio.init(); audio.ui(); spawn(); };
   $('resumeBtn').onclick = () => { lockPointer(); };
+  // admin: free camera to inspect the map (name + key, see admin.js)
+  inspector = new Inspector({ camera, canvas, onExit: () => { state = 'lobby'; $('lobby').classList.remove('hidden'); renderLobby(); } });
+  const ib = document.createElement('button');
+  ib.id = 'inspectBtn'; ib.className = 'inspect-btn hidden'; ib.textContent = 'ADMIN · INSPECT MAP';
+  ib.onclick = () => { if (!isAdmin()) return; state = 'inspect'; $('lobby').classList.add('hidden'); inspector.enter(); };
+  $('playBtn').after(ib);
+  loadAdminKey().then((ok) => { adminKey = ok; updateAdminBtn(); });
   $('leaveBtn').onclick = () => { leaveToLobby(); };
   if (matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches) $('mobileWarn').classList.remove('hidden');
   const credit = document.querySelector('.credit');
@@ -219,6 +227,9 @@ function allPlayers() {
   return rows;
 }
 function myName() { return cleanName(settings.name); }
+let inspector = null, adminKey = false;
+const isAdmin = () => adminKey && (settings.name || '').trim().toLowerCase() === 'khoanotfound';
+function updateAdminBtn() { const b = $('inspectBtn'); if (b) b.classList.toggle('hidden', !isAdmin()); }
 
 // ---------------- spawn / death ----------------
 function spawn() {
@@ -862,6 +873,7 @@ function frame() {
 
   if (state === 'playing') updatePlayer(dt, now);
   else if (state === 'dead') deathCam(dt, now);
+  else if (state === 'inspect') inspector.update(dt);
   else lobbyCam(dt);
 
   updatePeers(dt, now);
@@ -872,8 +884,8 @@ function frame() {
   }
 
   // sun follows the action
-  const focus = state === 'lobby' ? new THREE.Vector3(map.center.x, 0, map.center.z) : (state === 'dead' ? deathPos : me.pos);
-  setShadowArea(state === 'lobby' ? 210 : 75);
+  const focus = state === 'lobby' ? new THREE.Vector3(map.center.x, 0, map.center.z) : state === 'dead' ? deathPos : state === 'inspect' ? camera.position : me.pos;
+  setShadowArea(state === 'lobby' ? 210 : state === 'inspect' ? 140 : 75);
   sun.target.position.set(Math.round(focus.x), 0, Math.round(focus.z));
   sun.position.copy(sun.target.position).addScaledVector(sunDir, 220);
   scene.userData.sky.position.copy(camera.position);
@@ -920,4 +932,4 @@ function frame() {
 }
 
 // test hooks
-window.__game = { me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
+window.__game = { get inspector() { return inspector; }, me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };

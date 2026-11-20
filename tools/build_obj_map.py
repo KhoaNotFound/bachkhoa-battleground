@@ -40,14 +40,14 @@ TREES = {13: '#3f8a3a', 40: '#4a9a40', 30: '#5e8f3c'}
 NO_COLLIDE = {15, 34, 13, 40}  # road/pad = physics ground plane; tree canopies don't block movement
 OVERRIDE = {41: '#e3dccb'}  # walls / building shells
 # textured ground surfaces
-GROUND_KIND = {15: 'asphalt', 34: 'pavers', 7: 'grass', 77: 'grass'}
+GROUND_KIND = {15: 'asphalt', 34: 'pavers', 7: 'grass', 77: 'grass', 21: 'pitch'}  # 21 = big football field
 # per-building styles (textures.js facade() styles / roof colors), weighted toward the campus look
 FACADES = ['cream', 'yellow', 'white', 'grey', 'corridor']
 FACADE_W = [0.3, 0.25, 0.2, 0.1, 0.15]
 FACADE_COL = {'cream': '#ece3cf', 'yellow': '#e9cf8c', 'white': '#eef1f3', 'grey': '#c3c7c9', 'corridor': '#e8e2d2'}
 ROOFS = [('#c8664e', 'tile'), ('#b9bdbf', 'flat'), ('#8fb4d4', 'metal'), ('#cfcfc8', 'flat')]
 ROOF_W = [0.35, 0.25, 0.2, 0.2]
-KIND_COL = {'asphalt': '#4a4f55', 'pavers': '#bdbdb5', 'grass': '#5f9a45', 'concrete': '#cfccc2'}
+KIND_COL = {'pitch': '#55a242', 'asphalt': '#4a4f55', 'pavers': '#bdbdb5', 'grass': '#5f9a45', 'concrete': '#cfccc2'}
 
 
 def load(src):
@@ -281,6 +281,9 @@ def main():
         if i in GROUND_KIND:
             kind = GROUND_KIND[i]
             m = np.full(n, mat(kind, None if kind != 'plain' else o['color'], ground=True))
+            if kind == 'pitch':  # texture is stretched over the whole field
+                mats[m[0]]['bbox'] = [round(float(T[:, :, 0].min()), 2), round(float(T[:, :, 2].min()), 2),
+                                      round(float(T[:, :, 0].max()), 2), round(float(T[:, :, 2].max()), 2)]
         elif i in GROUND:
             m = np.full(n, mat('concrete', None, ground=True))
         elif i in TREES:

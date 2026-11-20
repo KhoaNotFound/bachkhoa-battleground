@@ -194,3 +194,13 @@ button { font-family: inherit; cursor: pointer; }
 .death-info { color: #ddd; font-size: 14px; margin-top: 4px; text-shadow: 0 2px 8px #000; }
 .death-timer { width: 260px; height: 4px; margin: 16px auto 0; border-radius: 2px; background: rgba(255,255,255,0.15); overflow: hidden; }
 .death-timer i { display: block; height: 100%; width: 0; background: #fff; }
+
+/* admin inspect mode */
+.inspect-btn { width: 100%; margin: -8px 0 16px; padding: 10px; border: 1px dashed rgba(255,212,92,0.7); border-radius: 12px; background: rgba(255,212,92,0.08); color: #ffd45c; font-family: var(--display); letter-spacing: 1px; font-size: 14px; }
+.inspect-btn:hover { background: rgba(255,212,92,0.16); }
+.inspect-ui { position: fixed; inset: 0; pointer-events: none; z-index: 50; font-family: var(--display); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+.inspect-coords { position: absolute; top: 12px; left: 16px; font-size: 15px; background: rgba(0,0,0,0.35); padding: 6px 10px; border-radius: 8px; }
+.inspect-help { position: absolute; bottom: 12px; left: 16px; right: 16px; font-size: 12px; opacity: 0.85; }
+.inspect-toast { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; background: rgba(0,0,0,0.5); padding: 8px 14px; border-radius: 10px; opacity: 0; transition: opacity .2s; }
+.inspect-toast.on { opacity: 1; }
+.inspect-ui.bare .inspect-coords, .inspect-ui.bare .inspect-help { display: none; }

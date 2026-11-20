@@ -138,11 +138,12 @@ export function grass() {
   noise(g, 256, 256, 14);
   return tex(c);
 }
-export function field() {
-  // 60m x 40m pitch, drawn at 16px / m
-  const S = 16, W = 60 * S, H = 40 * S;
+export function field(L = 60, Wd = 40) {
+  // L x Wd meter pitch (long side along the texture's u axis)
+  const S = Math.min(16, 2048 / L), W = Math.round(L * S), H = Math.round(Wd * S);
   const [c, g] = cv(W, H);
-  for (let i = 0; i < 12; i++) { g.fillStyle = i % 2 ? '#4f9a3c' : '#5aa946'; g.fillRect((i * W) / 12, 0, W / 12 + 1, H); }
+  const stripes = Math.max(12, Math.round(L / 6)) & ~1;
+  for (let i = 0; i < stripes; i++) { g.fillStyle = i % 2 ? '#4f9a3c' : '#5aa946'; g.fillRect((i * W) / stripes, 0, W / stripes + 1, H); }
   noise(g, W, H, 10);
   g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 0.14 * S;
   const m = 1.5 * S;
