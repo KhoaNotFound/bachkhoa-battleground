@@ -1,7 +1,9 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as TX from './textures.js';
 import { damp, lerpAngle } from './util.js';
 import { rayBox } from './physics.js';
+import { buildThirdPersonButterfly } from './butterfly.js';
 
 const SKIN = '#f1c27d';
 const boxGeoCache = new Map();
@@ -17,14 +19,40 @@ const pantsMat = new THREE.MeshLambertMaterial({ color: 0x2b3a55 });
 const shoeMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
 const faceMat = new THREE.MeshLambertMaterial({ map: faceTex });
 const gunDark = new THREE.MeshLambertMaterial({ color: 0x1e2120 });
-const gunGreen = new THREE.MeshLambertMaterial({ color: 0x4b5a2e });
+const gunGold = new THREE.MeshLambertMaterial({ color: 0xc29e44 });
 
-export function buildAwmMesh(scale = 1) {
+let cachedAwpTemplate = null;
+function loadAwpTemplate() {
+  if (!cachedAwpTemplate) {
+    cachedAwpTemplate = new Promise((resolve) => {
+      new GLTFLoader().load(
+        'assets/awp-dragon-lore.glb',
+        (gltf) => {
+          const tpl = new THREE.Group();
+          gltf.scene.traverse((o) => {
+            if (o.isMesh && o.name && o.name.startsWith('Awp')) {
+              const part = new THREE.Mesh(o.geometry, o.material);
+              part.castShadow = true;
+              tpl.add(part);
+            }
+          });
+          tpl.scale.setScalar(2.2);
+          resolve(tpl);
+        },
+        undefined,
+        () => resolve(null)
+      );
+    });
+  }
+  return cachedAwpTemplate;
+}
+
+export function buildAwmMesh(scale = 1, loadGlb = true) {
   const g = new THREE.Group();
   const add = (geo, mat, x, y, z, rx = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.x = rx; m.castShadow = true; g.add(m); return m; };
   add(bgeo(0.06, 0.07, 0.34), gunDark, 0, 0, 0);
-  add(bgeo(0.065, 0.12, 0.36), gunGreen, 0, -0.02, 0.33);
-  add(bgeo(0.07, 0.075, 0.42), gunGreen, 0, -0.005, -0.36);
+  add(bgeo(0.065, 0.12, 0.36), gunGold, 0, -0.02, 0.33);
+  add(bgeo(0.07, 0.075, 0.42), gunGold, 0, -0.005, -0.36);
   add(new THREE.CylinderGeometry(0.012, 0.014, 0.6, 8), gunDark, 0, 0.012, -0.85, Math.PI / 2);
   add(new THREE.CylinderGeometry(0.022, 0.022, 0.08, 8), gunDark, 0, 0.012, -1.17, Math.PI / 2);
   add(new THREE.CylinderGeometry(0.022, 0.022, 0.32, 10), gunDark, 0, 0.085, -0.02, Math.PI / 2);
@@ -34,6 +62,14 @@ export function buildAwmMesh(scale = 1) {
   add(bgeo(0.03, 0.04, 0.04), gunDark, 0, 0.05, -0.1);
   add(bgeo(0.03, 0.04, 0.04), gunDark, 0, 0.05, 0.06);
   g.scale.setScalar(scale);
+
+  if (loadGlb) {
+    loadAwpTemplate().then((tpl) => {
+      if (!tpl) return;
+      for (const ch of [...g.children]) g.remove(ch);
+      g.add(tpl.clone());
+    });
+  }
   return g;
 }
 
@@ -75,6 +111,14 @@ export class Avatar {
     this.gun.position.set(0.14, -0.05, -0.32);
     this.aim.add(this.gun);
     this.muzzle = new THREE.Object3D(); this.muzzle.position.set(0, 0.012, -1.22); this.gun.add(this.muzzle);
+
+    // 3rd-person butterfly knife held in right hand (arms[1])
+    this.knife = buildThirdPersonButterfly();
+    this.knife.scale.setScalar(1.35);
+    this.knife.position.set(0, -0.58, -0.14);
+    this.knife.rotation.set(0, Math.PI / 2, -0.2);
+    this.knife.visible = false;
+    this.arms[1].add(this.knife);
 
     // name tag
     this.tagMat = new THREE.SpriteMaterial({ map: TX.nameTag(name, color), depthWrite: false, transparent: true });
@@ -139,12 +183,21 @@ export class Avatar {
     const [aL, aR] = this.arms;
     if (this.weapon === 1) {
       this.gun.visible = true;
+      this.knife.visible = false;
       const p = this.pitch - cr * 0.15;
       aR.rotation.set(Math.PI / 2 + p - 0.15 + this.recoil * 0.25, 0, 0.15);
       aL.rotation.set(Math.PI / 2 + p + 0.05 + this.recoil * 0.25, 0, -0.55);
       this.gun.position.z = -0.32 + this.recoil * 0.08;
+    } else if (this.weapon === 2) {
+      this.gun.visible = false;
+      this.knife.visible = true;
+      const pk = Math.sin(Math.min(1, this.punchT) * Math.PI);
+      const guard = 1.05 + this.pitch * 0.55;
+      aR.rotation.set(guard + pk * 0.85 + sw * 0.28, -pk * 0.45, 0.2 - pk * 0.55);
+      aL.rotation.set(0.45 - sw * 0.45, 0, -0.12);
     } else {
       this.gun.visible = false;
+      this.knife.visible = false;
       const pk = Math.sin(Math.min(1, this.punchT) * Math.PI);
       const guard = 1.25 + this.pitch * 0.5;
       aR.rotation.set(guard + (this.punchSide === 0 ? pk * 0.5 : 0) + sw * 0.1, 0, 0.25 - (this.punchSide === 0 ? pk * 0.3 : 0));

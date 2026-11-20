@@ -17,6 +17,7 @@ const COLORS = ['#1e88e5', '#e53935', '#43a047', '#fdd835', '#8e24aa', '#fb8c00'
 // ---------------- weapons tuning ----------------
 const FIST = { dmg: 25, head: 35, range: 2.7, cd: 420 };
 const AWM = { head: 250, body: 85, legs: 65, mag: 5, cd: 1350, reload: 2800, switch: 550 };
+const KNIFE = { dmg: 45, head: 70, heavyDmg: 75, heavyHead: 110, range: 2.9, cd: 380, heavyCd: 680, switch: 520 };
 const MAX_HP = 100;
 const KILL_HEAL = 25;
 
@@ -98,9 +99,9 @@ const peers = new Map();
 const me = {
   name: '', color: settings.color, alive: false, hp: MAX_HP, kills: 0, deaths: 0,
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), onGround: false,
-  yaw: 0, pitch: 0, crouching: false, crouchV: 0, weapon: 1, ammo: AWM.mag,
+  yaw: 0, pitch: 0, crouching: false, crouchV: 0, sprint: false, weapon: 1, lastWeapon: 2, ammo: AWM.mag,
   nextFire: 0, reloadEnd: 0, reloadStart: 0, switchUntil: 0, ads: 0, protectedUntil: 0,
-  lastDamage: 0, recoil: 0, shake: 0, stepAcc: 0, landDip: 0, killerId: null,
+  lastDamage: 0, recoil: 0, shake: 0, stepAcc: 0, landDip: 0, jumpImpulse: 0, landImpulse: 0, killerId: null,
 };
 let state = 'loading';
 const keys = {};
@@ -118,7 +119,7 @@ const feed = [];
     setLoad(55, 'Đang chuẩn bị vũ khí…');
     await nextFrame();
     hud = new HUD(map.minimap);
-    vm = new ViewModel();
+    vm = new ViewModel(renderer, audio);
     vm.setColor(me.color);
     vfx = new VFX(scene);
     vfx.setScale(window.innerHeight);
@@ -234,8 +235,8 @@ function spawn() {
   me.vel.set(0, 0, 0);
   me.yaw = Math.atan2(pick.x, pick.z); // face campus centre
   me.pitch = 0;
-  me.hp = MAX_HP; me.ammo = AWM.mag; me.weapon = 1; me.reloadEnd = 0; me.nextFire = 0; me.ads = 0;
-  me.alive = true; me.crouching = false; me.crouchV = 0;
+  me.hp = MAX_HP; me.ammo = AWM.mag; me.weapon = 1; me.lastWeapon = 2; me.reloadEnd = 0; me.nextFire = 0; me.ads = 0;
+  me.alive = true; me.crouching = false; me.crouchV = 0; me.sprint = false; me.jumpImpulse = 0; me.landImpulse = 0;
   me.protectedUntil = performance.now() + 2500;
   me.switchUntil = 0; me.lastDamage = 0; me.recoil = 0;
   vm.setWeapon(1); vm.switchT = 0;
@@ -289,7 +290,7 @@ function die(killerId, m) {
   $('pause').classList.add('hidden');
   $('death').classList.remove('hidden');
   $('deathBy').innerHTML = killer ? `bởi <span style="color:${killer.color}">${escapeHtml(killer.name)}</span>` : '';
-  $('deathInfo').textContent = [m.w === 'fist' ? 'Nắm đấm' : 'AWM', m.hs ? 'Headshot' : '', m.dist ? `${Math.round(m.dist)} m` : ''].filter(Boolean).join(' · ');
+  $('deathInfo').textContent = [m.w === 'fist' ? 'Nắm đấm' : m.w === 'knife' ? 'Dao Butterfly' : 'AWM', m.hs ? 'Headshot' : '', m.dist ? `${Math.round(m.dist)} m` : ''].filter(Boolean).join(' · ');
 }
 function leaveToLobby() {
   if (state === 'playing') {
@@ -315,24 +316,38 @@ addEventListener('keydown', (e) => {
   keys[e.code] = true;
   if (e.code === 'Digit1') switchWeapon(0);
   if (e.code === 'Digit2') switchWeapon(1);
-  if (e.code === 'KeyQ') switchWeapon(me.weapon ? 0 : 1);
+  if (e.code === 'Digit3') switchWeapon(2);
+  if (e.code === 'KeyQ') switchWeapon(me.lastWeapon !== me.weapon ? me.lastWeapon : (me.weapon === 2 ? 1 : 2));
+  if (e.code === 'KeyF' && !e.repeat) vm.setInspect(true);
   if (e.code === 'KeyR') startReload();
   if (e.code === 'Space' || e.code === 'KeyC') e.preventDefault();
 });
-addEventListener('keyup', (e) => { keys[e.code] = false; if (e.code === 'Tab') showBoard = false; });
-addEventListener('blur', () => { for (const k in keys) keys[k] = false; firing = false; adsHeld = false; showBoard = false; });
+addEventListener('keyup', (e) => {
+  keys[e.code] = false;
+  if (e.code === 'Tab') showBoard = false;
+  if (e.code === 'KeyF' && vm) vm.setInspect(false);
+});
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; firing = false; adsHeld = false; showBoard = false; if (vm) vm.setInspect(false); });
 addEventListener('mousemove', (e) => {
   if (state !== 'playing') return;
   if (document.pointerLockElement === canvas || TEST) { mouseDX += e.movementX || 0; mouseDY += e.movementY || 0; }
 });
 addEventListener('mousedown', (e) => {
   if (state !== 'playing' || (document.pointerLockElement !== canvas && !TEST)) return;
-  if (e.button === 0) { firing = true; tryFire(); }
-  if (e.button === 2) adsHeld = true;
+  if (e.button === 0) { firing = true; tryFire(false); }
+  if (e.button === 2) {
+    if (me.weapon === 2) tryFire(true);
+    else { adsHeld = true; if (vm) vm.setInspect(false); }
+  }
 });
 addEventListener('mouseup', (e) => { if (e.button === 0) firing = false; if (e.button === 2) adsHeld = false; });
 addEventListener('contextmenu', (e) => e.preventDefault());
-addEventListener('wheel', (e) => { if (state === 'playing' && document.pointerLockElement === canvas) switchWeapon(me.weapon ? 0 : 1); });
+addEventListener('wheel', (e) => {
+  if (state === 'playing' && document.pointerLockElement === canvas) {
+    const dir = e.deltaY > 0 ? 1 : -1;
+    switchWeapon((me.weapon + dir + 3) % 3);
+  }
+});
 addEventListener('resize', onResize);
 function onResize() {
   const w = window.innerWidth, h = window.innerHeight;
@@ -346,14 +361,16 @@ addEventListener('beforeunload', () => net.leave());
 // ---------------- weapons ----------------
 function switchWeapon(w) {
   if (w === me.weapon || !me.alive) return;
+  me.lastWeapon = me.weapon;
   me.weapon = w;
-  me.switchUntil = performance.now() + AWM.switch;
+  me.switchUntil = performance.now() + (w === 2 ? KNIFE.switch : AWM.switch);
   me.reloadEnd = 0;
+  adsHeld = false;
   vm.reload(0.0001); vm.reloadT = 1;
   vm.setWeapon(w);
   hud.setWeapon(w, me.ammo);
   hud.setReload(-1);
-  audio.ui();
+  if (w !== 2) audio.ui();
 }
 function startReload() {
   const now = performance.now();
@@ -365,19 +382,26 @@ function startReload() {
 }
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _e = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _m = new THREE.Vector3();
 function aimDir(out) { return out.set(0, 0, -1).applyEuler(camera.rotation); }
-function tryFire() {
+function tryFire(heavy = false) {
   const now = performance.now();
   if (!me.alive || now < me.switchUntil) return;
   me.protectedUntil = Math.min(me.protectedUntil, now); // firing ends spawn protection
-  if (me.weapon === 0) {
+  if (me.weapon === 0 || me.weapon === 2) {
     if (now < me.nextFire) return;
-    me.nextFire = now + FIST.cd;
-    vm.punch();
-    audio.swing(null);
-    net.send({ t: 'p' });
+    const isKnife = me.weapon === 2;
+    const range = isKnife ? KNIFE.range : FIST.range;
+    me.nextFire = now + (isKnife ? (heavy ? KNIFE.heavyCd : KNIFE.cd) : FIST.cd);
+    if (isKnife) {
+      vm.knifeSlash(heavy);
+      audio.knifeSlash(null, heavy);
+    } else {
+      vm.punch();
+      audio.swing(null);
+    }
+    net.send({ t: 'p', w: isKnife ? 2 : 0, hv: heavy ? 1 : 0 });
     _o.copy(camera.position); aimDir(_d);
-    const wall = world.raycast(_o, _d, FIST.range, (b) => b.bullet);
-    const maxT = wall ? wall.t : FIST.range;
+    const wall = world.raycast(_o, _d, range, (b) => b.bullet);
+    const maxT = wall ? wall.t : range;
     let best = null;
     for (const p of peers.values()) {
       if (!p.alive || !p.pose) continue;
@@ -390,21 +414,31 @@ function tryFire() {
         if (!p.alive || !p.pose) continue;
         _e.set(p.pose.x, p.pose.y + (p.pose.crouch ? 0.8 : 1.15), p.pose.z).sub(_o);
         const dist = _e.length();
-        if (dist > FIST.range + 0.3 || dist > maxT + 0.4) continue;
+        if (dist > range + 0.3 || dist > maxT + 0.4) continue;
         if (_e.normalize().dot(_d) > 0.82 && (!best || dist < best.t)) best = { p, t: dist, part: 'body' };
       }
     }
     if (best) {
       const head = best.part === 'head';
       _e.copy(_o).addScaledVector(_d, best.t);
-      dealDamage(best.p, head ? FIST.head : FIST.dmg, head, 'fist', best.t);
-      vfx.punchHit(_e);
-      audio.punchHit(null);
-      me.shake = Math.max(me.shake, 0.3);
+      const dmg = isKnife
+        ? (heavy ? (head ? KNIFE.heavyHead : KNIFE.heavyDmg) : (head ? KNIFE.head : KNIFE.dmg))
+        : (head ? FIST.head : FIST.dmg);
+      dealDamage(best.p, dmg, head, isKnife ? 'knife' : 'fist', best.t);
+      if (isKnife) {
+        vfx.blood(_e, _d, head);
+        audio.knifeHit(null, heavy);
+        me.shake = Math.max(me.shake, heavy ? 0.5 : 0.32);
+      } else {
+        vfx.punchHit(_e);
+        audio.punchHit(null);
+        me.shake = Math.max(me.shake, 0.3);
+      }
     } else if (wall) {
       _e.copy(_o).addScaledVector(_d, wall.t);
       vfx.impact(_e, wall.normal, wall.mat);
-      audio.punchHit(null);
+      if (isKnife) audio.knifeClack(0.82, 0.8);
+      else audio.punchHit(null);
     }
     return;
   }
@@ -542,7 +576,7 @@ function onNetMessage(from, m) {
       const o = now - m.ts;
       if (p.offset === null || o < p.offset || Math.abs(o - p.offset) > 1500) p.offset = o;
       else p.offset += (o - p.offset) * 0.01;
-      const s = { t: m.ts + p.offset, x: +m.p[0], y: +m.p[1], z: +m.p[2], yaw: +m.r || 0, pitch: +m.x || 0, w: m.w ? 1 : 0, c: !!m.c, sp: +m.sp || 0, pr: !!m.pr, g: !!m.g };
+      const s = { t: m.ts + p.offset, x: +m.p[0], y: +m.p[1], z: +m.p[2], yaw: +m.r || 0, pitch: +m.x || 0, w: clamp(m.w | 0, 0, 2), c: !!m.c, sp: +m.sp || 0, pr: !!m.pr, g: !!m.g };
       if (!isFinite(s.x + s.y + s.z)) return;
       p.buf.push(s);
       if (p.buf.length > 40) p.buf.shift();
@@ -576,12 +610,16 @@ function onNetMessage(from, m) {
       }
       break;
     }
-    case 'p': if (p.avatar) { p.avatar.punch(); audio.swing(p.avatar.root.position); } break;
+    case 'p': if (p.avatar) { p.avatar.punch(); if (m.w === 2) audio.knifeSlash(p.avatar.root.position, !!m.hv); else audio.swing(p.avatar.root.position); } break;
     case 'dmg': {
       if (m.v === net.id) onDamaged(p, m);
       else {
         const v = peers.get(m.v);
-        if (v && v.avatar && m.w === 'fist') { audio.punchHit(v.avatar.root.position); vfx.punchHit(v.avatar.root.position.clone().setY(v.avatar.root.position.y + 1.3)); }
+        if (v && v.avatar && (m.w === 'fist' || m.w === 'knife')) {
+          if (m.w === 'knife') audio.knifeHit(v.avatar.root.position, false);
+          else audio.punchHit(v.avatar.root.position);
+          vfx.punchHit(v.avatar.root.position.clone().setY(v.avatar.root.position.y + 1.3));
+        }
       }
       break;
     }
@@ -617,7 +655,8 @@ function closestOnSeg(a, b, p) {
 }
 function addKill(killer, victim, weapon, hs, mine, dist) {
   hud.killfeed(killer, victim, weapon, hs, mine || victim.name === myName(), dist);
-  feed.unshift(`<b style="color:${killer.color}">${escapeHtml(killer.name)}</b> hạ <b style="color:${victim.color}">${escapeHtml(victim.name)}</b> bằng ${weapon === 'fist' ? 'nắm đấm' : 'AWM'}${hs ? ' (headshot)' : ''}${dist ? ` · ${Math.round(dist)}m` : ''}`);
+  const wName = weapon === 'fist' ? 'nắm đấm' : weapon === 'knife' ? 'dao Butterfly' : 'AWM';
+  feed.unshift(`<b style="color:${killer.color}">${escapeHtml(killer.name)}</b> hạ <b style="color:${victim.color}">${escapeHtml(victim.name)}</b> bằng ${wName}${hs ? ' (headshot)' : ''}${dist ? ` · ${Math.round(dist)}m` : ''}`);
   if (feed.length > 30) feed.pop();
 }
 function onDamaged(attacker, m) {
@@ -672,19 +711,24 @@ function updatePlayer(dt, now) {
   const sin = Math.sin(me.yaw), cos = Math.cos(me.yaw);
   const wx = fx * cos + fz * sin, wz = -fx * sin + fz * cos;
   const sprint = keys.ShiftLeft && fz < 0 && !me.crouching && me.ads < 0.3;
+  me.sprint = !!sprint;
   let speed = me.crouching ? 2.8 : sprint ? 8.2 : 5.4;
   if (me.ads > 0.5) speed *= 0.55;
   if (me.weapon === 0 && !me.crouching) speed *= 1.08;
+  if (me.weapon === 2 && !me.crouching) speed *= 1.15;
   const accel = me.onGround ? 14 : 2.5;
   const tx = (fx || fz) ? wx * speed : 0, tz = (fx || fz) ? wz * speed : 0;
   me.vel.x = damp(me.vel.x, tx, accel, dt);
   me.vel.z = damp(me.vel.z, tz, accel, dt);
-  if (keys.Space && me.onGround && locked) { me.vel.y = 6.8; me.onGround = false; }
+  if (keys.Space && me.onGround && locked) { me.vel.y = 6.8; me.onGround = false; me.jumpImpulse = 1.0; }
   me.vel.y -= 21 * dt;
   const fallV = me.vel.y;
   const wasGround = me.onGround;
   mover.move(me, dt, h);
-  if (!wasGround && me.onGround && fallV < -7) { audio.land(); me.landDip = Math.min(0.25, -fallV * 0.02); if (fallV < -16) { /* fall damage */ const d = Math.round((-fallV - 16) * 6); if (d > 0) { me.hp -= d; hud.setHP(me.hp); hud.damage(null, d); if (me.hp <= 0) die(null, { w: 'fall' }); } } }
+  if (!wasGround && me.onGround && fallV < -3.5) {
+    me.landImpulse = Math.min(1.5, -fallV / 11);
+    if (fallV < -7) { audio.land(); me.landDip = Math.min(0.25, -fallV * 0.02); if (fallV < -16) { /* fall damage */ const d = Math.round((-fallV - 16) * 6); if (d > 0) { me.hp -= d; hud.setHP(me.hp); hud.damage(null, d); if (me.hp <= 0) die(null, { w: 'fall' }); } } }
+  }
   // keep inside bounds (safety)
   me.pos.x = clamp(me.pos.x, BOUNDS.x0 + 0.5, BOUNDS.x1 - 0.5);
   me.pos.z = clamp(me.pos.z, BOUNDS.z0 + 0.5, BOUNDS.z1 - 0.5);
@@ -701,7 +745,7 @@ function updatePlayer(dt, now) {
   hud.setReload(me.reloadEnd ? (now - me.reloadStart) / AWM.reload : -1);
   const canAds = me.weapon === 1 && !me.reloadEnd && now >= me.switchUntil && adsHeld && !sprint;
   me.ads = clamp(me.ads + (canAds ? dt * 6 : -dt * 8), 0, 1);
-  if (firing && me.weapon === 0) tryFire();
+  if (firing && (me.weapon === 0 || me.weapon === 2)) tryFire(false);
 
   // regen
   if (me.hp < MAX_HP && now - me.lastDamage > 7000) { me.hp = Math.min(MAX_HP, me.hp + 8 * dt); hud.setHP(me.hp); }
@@ -842,8 +886,23 @@ function frame() {
   renderer.clear();
   renderer.render(scene, camera);
   if (state === 'playing') {
-    vm.update(dt, { speed: Math.hypot(me.vel.x, me.vel.z), onGround: me.onGround, ads: me.ads, lookDX, lookDY });
-    if (me.ads <= 0.92 || me.weapon === 0) {
+    vm.update(dt, {
+      speed: Math.hypot(me.vel.x, me.vel.z),
+      onGround: me.onGround,
+      sprint: me.sprint,
+      crouchV: me.crouchV,
+      ads: me.ads,
+      lookDX,
+      lookDY,
+      yaw: me.yaw,
+      pitch: me.pitch,
+      vel: me.vel,
+      jumpImpulse: me.jumpImpulse,
+      landImpulse: me.landImpulse,
+    });
+    me.jumpImpulse = 0;
+    me.landImpulse = 0;
+    if (me.ads <= 0.92 || me.weapon !== 1) {
       renderer.clearDepth();
       renderer.render(vm.scene, vm.camera);
     }
@@ -861,4 +920,4 @@ function frame() {
 }
 
 // test hooks
-window.__game = { get map() { return map; }, me, peers, net, world, camera, keys, info() { return { calls: renderer.info.render.calls, tris: renderer.info.render.triangles, geos: renderer.info.memory.geometries, tex: renderer.info.memory.textures }; }, spawn, tryFire, switchWeapon, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
+window.__game = { me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
