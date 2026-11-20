@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ở lại trường vào buổi tối · BK Battle Ground</title>
+<meta name="description" content="Chế độ co-op 2–5 người: ở lại trường qua đêm làm đồ án, có ma giả giọng bạn bè.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Ccircle cx=%2732%27 cy=%2732%27 r=%2730%27 fill=%27%23070b14%27/%3E%3Cpath d=%27M40 12a20 20 0 1 0 12 32A16 16 0 1 1 40 12z%27 fill=%27%23ffe9a8%27/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="night.css">
+<script type="importmap">
+{ "imports": { "three": "../vendor/three.module.js", "three/addons/": "../vendor/addons/" } }
+</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- ============ MENU: tạo / vào phòng ============ -->
+<div id="menu" class="screen">
+  <div class="card wide">
+    <div class="title"><span class="moon">☾</span> Ở LẠI TRƯỜNG <b>VÀO BUỔI TỐI</b></div>
+    <p class="lead">8 giờ sáng mai bảo vệ đồ án đa ngành. Cả nhóm 5 sinh viên 5 khoa ở lại trường làm cho xong. Trường về đêm hơi lạ… đừng đi lẻ.</p>
+    <label class="field">Tên của bạn <input id="nameIn" maxlength="16" placeholder="Nhập tên" autocomplete="off"></label>
+    <div class="menu-grid">
+      <section>
+        <h3>Tạo phòng</h3>
+        <p class="muted">Tối đa 5 người, đủ 2 người là bắt đầu được. Máy của người tạo phòng sẽ làm máy chủ, nên đừng tắt tab giữa trận.</p>
+        <button id="createBtn" class="primary">Tạo phòng mới</button>
+        <button id="soloBtn" class="ghost-btn hidden">Chơi một mình (test)</button>
+      </section>
+      <section>
+        <h3>Vào phòng</h3>
+        <div class="join-row"><input id="codeIn" maxlength="5" placeholder="MÃ PHÒNG" autocomplete="off"><button id="joinBtn">Vào</button></div>
+        <h4>Phòng đang mở</h4>
+        <ul id="roomList" class="room-list"><li class="muted">Đang tìm phòng…</li></ul>
+      </section>
+    </div>
+    <div id="menuMsg" class="msg"></div>
+    <div class="foot"><a href="../">← Về BK Battle Ground</a> · <span id="netState">Đang kết nối…</span></div>
+  </div>
+</div>
+
+<!-- ============ LOBBY trong phòng ============ -->
+<div id="lobby" class="screen hidden">
+  <div class="card wide">
+    <div class="lobby-head">
+      <div>Phòng <b id="roomCode">-----</b> <button id="copyLink" class="small">Sao chép link mời</button></div>
+      <button id="leaveBtn" class="small">Rời phòng</button>
+    </div>
+    <div class="lobby-grid">
+      <section>
+        <h3>Người chơi (<span id="pCount">0</span>/5)</h3>
+        <ul id="roster" class="roster"></ul>
+      </section>
+      <section>
+        <h3>Chọn khoa <span class="muted">(mỗi khoa một người)</span></h3>
+        <div id="facList" class="fac-list"></div>
+        <h3>Màu áo</h3>
+        <div id="shirtList" class="shirt-list"></div>
+        <h3>Giọng nói</h3>
+        <div id="micStatus" class="mic-status">Chưa kiểm tra mic.</div>
+        <button id="micBtn">Đồng ý ghi âm và kiểm tra mic</button>
+        <div id="aiStatus" class="muted small-text"></div>
+      </section>
+    </div>
+    <div class="lobby-foot">
+      <button id="readyBtn" disabled>Sẵn sàng</button>
+      <button id="startBtn" class="primary hidden" disabled>Bắt đầu</button>
+      <span id="lobbyMsg" class="muted"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ĐỒNG Ý GHI ÂM + MIC CHECK ============ -->
+<div id="consent" class="screen hidden">
+  <div class="card">
+    <h2>Ghi âm giọng nói</h2>
+    <p>Chế độ này <b>ghi lại giọng nói của bạn trong phiên chơi</b> để "thứ gì đó" trong trường bắt chước. Mỗi câu bạn nói được ghép lại nguyên văn, không tạo câu mới, không dùng AI nhân bản giọng.</p>
+    <ul>
+      <li>Clip giọng chỉ nằm trong trình duyệt của những người cùng phòng, gửi trực tiếp giữa các máy (P2P), không lưu lên server nào.</li>
+      <li>Nhận dạng giọng nói (Whisper) chạy ngay trên máy bạn.</li>
+      <li>Mọi clip bị xoá khi đóng tab hoặc kết thúc phiên.</li>
+    </ul>
+    <p>Không đồng ý thì không vào được chế độ này.</p>
+    <div class="row-end"><button id="consentNo">Không đồng ý</button><button id="consentYes" class="primary">Đồng ý</button></div>
+  </div>
+</div>
+<div id="miccheck" class="screen hidden">
+  <div class="card">
+    <h2>Kiểm tra mic</h2>
+    <p class="muted">Đọc to từng câu dưới đây. Câu sẽ tự chuyển khi bạn nói xong.</p>
+    <div id="mcLine" class="mc-line">…</div>
+    <div class="vu"><i id="vuBar"></i></div>
+    <div id="mcProg" class="muted"></div>
+    <div class="row-end"><button id="mcSkip">Bỏ qua câu này</button><button id="mcRetry">Đọc lại</button></div>
+  </div>
+</div>
+
+<!-- ============ HUD ============ -->
+<div id="hud" class="hidden">
+  <div id="clock">22:00</div>
+  <div id="taskList"></div>
+  <div id="inv"></div>
+  <div id="prompt" class="hidden"></div>
+  <div id="toast"></div>
+  <div id="cross">+</div>
+  <div id="micInd" title="Mic">🎙</div>
+  <div id="spectate" class="hidden"></div>
+  <div id="clickToPlay" class="hidden">Bấm để chơi · WASD đi · Shift chạy · C/Ctrl cúi · F đèn pin · E tương tác · 1 tay không · 2 cầm súng · V nói (nếu bật push-to-talk) · Esc tạm dừng</div>
+  <div id="pause" class="hidden">
+    <div class="card">
+      <h2>Tạm dừng</h2>
+      <p class="muted">Game vẫn chạy, bạn vẫn có thể bị… thôi, quay lại nhanh.</p>
+      <label class="check"><input type="checkbox" id="pttIn"> Push-to-talk (giữ V để nói). Mặc định: mic luôn mở.</label>
+      <label class="field">Âm lượng <input type="range" id="volIn" min="0" max="1.5" step="0.05" value="1"></label>
+      <label class="field">Độ nhạy chuột <input type="range" id="sensIn" min="0.3" max="3" step="0.1" value="1"></label>
+      <div class="row-end"><button id="quitBtn">Thoát trận</button><button id="resumeBtn" class="primary">Tiếp tục</button></div>
+    </div>
+  </div>
+</div>
+<div id="task" class="hidden"></div>
+<div id="debug" class="hidden"></div>
+<div id="fade"></div>
+
+<!-- ============ KẾT THÚC ============ -->
+<div id="end" class="screen hidden">
+  <div class="card">
+    <h2 id="endTitle">…</h2>
+    <p id="endText"></p>
+    <div class="row-end"><button id="againBtn" class="primary">Về menu</button></div>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -26,7 +26,7 @@ function loadAwpTemplate() {
   if (!cachedAwpTemplate) {
     cachedAwpTemplate = new Promise((resolve) => {
       new GLTFLoader().load(
-        'assets/awp-dragon-lore.glb',
+        new URL('../assets/awp-dragon-lore.glb', import.meta.url).href,
         (gltf) => {
           const tpl = new THREE.Group();
           gltf.scene.traverse((o) => {
