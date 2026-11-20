@@ -474,7 +474,7 @@ function sendHello() {
 }
 function sendState(force) {
   const now = performance.now();
-  const interval = net.mode === 'server' ? 50 : 80;
+  const interval = net.mode === 'server' ? 50 : 125;
   if (!force && now - lastStateSent < interval) return;
   lastStateSent = now;
   net.send({
@@ -782,8 +782,9 @@ function updatePeers(dt, now) {
 let lobbyAngle = 0.6;
 function lobbyCam(dt) {
   lobbyAngle += dt * 0.035;
-  camera.position.set(Math.cos(lobbyAngle) * 185, 78, Math.sin(lobbyAngle) * 140);
-  camera.lookAt(0, 0, 0);
+  const c = map ? map.center : { x: 0, z: 0 };
+  camera.position.set(c.x + Math.cos(lobbyAngle) * 210, 95, c.z + Math.sin(lobbyAngle) * 185);
+  camera.lookAt(c.x, 0, c.z);
   if (camera.fov !== 55) { camera.fov = 55; camera.updateProjectionMatrix(); }
 }
 function deathCam(dt, now) {
@@ -826,8 +827,8 @@ function frame() {
   }
 
   // sun follows the action
-  const focus = state === 'lobby' ? new THREE.Vector3(0, 0, 0) : (state === 'dead' ? deathPos : me.pos);
-  setShadowArea(state === 'lobby' ? 170 : 75);
+  const focus = state === 'lobby' ? new THREE.Vector3(map.center.x, 0, map.center.z) : (state === 'dead' ? deathPos : me.pos);
+  setShadowArea(state === 'lobby' ? 210 : 75);
   sun.target.position.set(Math.round(focus.x), 0, Math.round(focus.z));
   sun.position.copy(sun.target.position).addScaledVector(sunDir, 220);
   scene.userData.sky.position.copy(camera.position);
@@ -858,4 +859,4 @@ function frame() {
 }
 
 // test hooks
-window.__game = { me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
+window.__game = { get map() { return map; }, me, peers, net, world, camera, keys, info() { return { calls: renderer.info.render.calls, tris: renderer.info.render.triangles, geos: renderer.info.memory.geometries, tex: renderer.info.memory.textures }; }, spawn, tryFire, switchWeapon, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };

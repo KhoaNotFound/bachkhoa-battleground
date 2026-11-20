@@ -1,6 +1,6 @@
 import { randId } from './util.js';
 
-const MQTT_URL = 'https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.esm.js';
+const MQTT_URL = new URL('../vendor/mqtt.esm.js', import.meta.url).href; // mqtt@5.10.1
 const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
 export const TOPIC_ROOT = 'bkbg/v2';
 
@@ -62,7 +62,7 @@ export class Net {
         }
         if (m.t === 'pong') { this.ping = Math.round(performance.now() - m.ts); return; }
         if (m.t === 'leave') { this.onLeave(m.f); return; }
-        if (m.f && m.f !== this.id) this.onMessage(m.f, m);
+        if (m.f && m.f !== this.id) this.dispatch(m.f, m);
       };
       ws.onerror = () => { if (!done) { done = true; clearTimeout(to); reject(new Error('ws error')); } };
       ws.onclose = () => {
@@ -111,15 +111,23 @@ export class Net {
             try { m = JSON.parse(payload.toString()); } catch { return; }
             this.recv++;
             if (from === this.id) {
-              if (m.t === 'ping') this.ping = Math.round(performance.now() - m.ts);
+              const list = m.t === 'b' && Array.isArray(m.m) ? m.m : [m];
+              for (const x of list) if (x && x.t === 'ping') this.ping = Math.round(performance.now() - x.ts);
               return;
             }
-            if (m.t === 'bye') { this.onLeave(from); return; }
-            if (m.t === 'ping') return;
-            this.onMessage(from, m);
+            this.dispatch(from, m);
           });
-          this._send = (s) => client.connected && client.publish(myTopic, s, { qos: 0 });
-          this._ping = () => this._send(JSON.stringify({ t: 'ping', ts: performance.now() }));
+          // The public broker allows ~10 messages/s per client: batch everything at 8 Hz.
+          this.batched = true;
+          this.queue = [];
+          clearInterval(this.flushTimer);
+          this.flushTimer = setInterval(() => {
+            if (!this.queue.length || !client.connected) return;
+            const q = this.queue; this.queue = [];
+            client.publish(myTopic, JSON.stringify(q.length === 1 ? q[0] : { t: 'b', m: q }), { qos: 0 });
+          }, 125);
+          this._send = null;
+          this._ping = () => this.send({ t: 'ping', ts: performance.now() });
           this.brokerUrl = url;
         });
         return;
@@ -128,13 +136,28 @@ export class Net {
     throw lastErr || new Error('no broker');
   }
   send(obj) {
-    if (!this._send) return;
     this.sent++;
-    this._send(JSON.stringify(obj));
+    if (this.batched) {
+      if (obj.t === 's') { const i = this.queue.findIndex((x) => x.t === 's'); if (i >= 0) { this.queue[i] = obj; return; } }
+      if (obj.t === 'h') { const i = this.queue.findIndex((x) => x.t === 'h'); if (i >= 0) { this.queue[i] = obj; return; } }
+      if (this.queue.length < 40) this.queue.push(obj);
+      return;
+    }
+    if (this._send) this._send(JSON.stringify(obj));
+  }
+  dispatch(from, m) {
+    if (m.t === 'b' && Array.isArray(m.m)) { for (const x of m.m) this.dispatch(from, x); return; }
+    if (!m || typeof m.t !== 'string') return;
+    if (m.t === 'bye') { this.onLeave(from); return; }
+    if (m.t === 'ping') return;
+    this.onMessage(from, m);
   }
   sendPing() { if (this._ping) this._ping(); }
   leave() {
     this.closing = true;
-    try { this.send({ t: 'bye' }); } catch {}
+    try {
+      if (this.client) this.client.publish(`${TOPIC_ROOT}/${this.room}/${this.id}`, '{"t":"bye"}', { qos: 0 });
+      else if (this._send) this._send('{"t":"bye"}');
+    } catch {}
   }
 }

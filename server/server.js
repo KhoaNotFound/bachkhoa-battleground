@@ -93,6 +93,28 @@ wss.on('connection', (ws, req) => {
   set.add(ws);
   bridgeRoom(room);
   ws.send(JSON.stringify({ t: 'welcome', id }));
+  // Each player gets its own MQTT publisher: the public broker allows ~10 msgs/s per client,
+  // so we batch this player's messages at 8 Hz (keeping only the latest state update).
+  let pub = null, queue = [], flush = null;
+  if (bridge) {
+    const topic = `${TOPIC_ROOT}/${room}/${id}`;
+    pub = mqtt.connect(BROKER, { clientId: 'bkbg_' + id + '_srv', clean: true, keepalive: 30, reconnectPeriod: 3000, will: { topic, payload: '{"t":"bye"}', qos: 0, retain: false } });
+    pub.on('error', () => {});
+    flush = setInterval(() => {
+      if (!queue.length || !pub.connected) return;
+      const q = queue; queue = [];
+      pub.publish(topic, q.length === 1 ? q[0] : '{"t":"b","m":[' + q.join(',') + ']}', { qos: 0 });
+    }, 125);
+  }
+  const enqueue = (raw) => {
+    if (!pub) return;
+    if (raw.startsWith('{"t":"s"') || raw.startsWith('{"t":"h"')) {
+      const pre = raw.slice(0, 8);
+      const i = queue.findIndex((x) => x.startsWith(pre));
+      if (i >= 0) { queue[i] = raw; return; }
+    }
+    if (queue.length < 40) queue.push(raw);
+  };
   console.log(`[+] ${id} joined ${room} (${set.size} in room)`);
 
   ws.on('pong', () => { ws.alive = true; });
@@ -106,14 +128,18 @@ wss.on('connection', (ws, req) => {
     }
     const out = '{"f":"' + id + '",' + raw.slice(1);
     for (const c of set) if (c !== ws && c.readyState === 1) c.send(out);
-    if (bridge && bridge.connected) bridge.publish(`${TOPIC_ROOT}/${room}/${id}`, raw, { qos: 0 });
+    enqueue(raw);
   });
   ws.on('close', () => {
     set.delete(ws);
     localIds.delete(id);
     const out = JSON.stringify({ t: 'leave', f: id });
     for (const c of set) if (c.readyState === 1) c.send(out);
-    if (bridge && bridge.connected) bridge.publish(`${TOPIC_ROOT}/${room}/${id}`, '{"t":"bye"}', { qos: 0 });
+    if (pub) {
+      clearInterval(flush);
+      const done = () => pub.end(true);
+      if (pub.connected) pub.publish(`${TOPIC_ROOT}/${room}/${id}`, '{"t":"bye"}', { qos: 0 }, done); else done();
+    }
     console.log(`[-] ${id} left ${room} (${set.size} in room)`);
   });
 });
