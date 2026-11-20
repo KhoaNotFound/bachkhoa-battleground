@@ -114,6 +114,8 @@ function joinRoom(code) {
   }, 700);
 }
 function leaveToMenu(msg) {
+  voice.setTransmit(false);
+  lobbyClips.length = 0;
   if (host) { host.stop(); host = null; }
   if (room?.isHost && !room.started) net.announce({ closed: true });
   if (room) clearInterval(room.annT);
@@ -165,7 +167,7 @@ function renderLobby() {
   const mine = room.roster.find((r) => r.id === net.id) || {};
   me.fac = mine.fac; me.color = mine.color || me.color;
   $('pCount').textContent = room.roster.length;
-  $('roster').innerHTML = room.roster.map((r) => `<li><span class="dot" style="background:${r.color}"></span>${escapeHtml(r.name)}${r.id === net.id ? ' (bạn)' : ''}${r.id === room.hostId ? ' 👑' : ''}<span class="tag">${r.fac ? FACULTIES.find((f) => f.id === r.fac).name : 'chưa chọn khoa'} ${r.ready ? '<b class="ready">· sẵn sàng</b>' : ''}</span></li>`).join('');
+  $('roster').innerHTML = room.roster.map((r) => `<li data-id="${r.id}"><span class="dot" style="background:${r.color}"></span>${escapeHtml(r.name)}${r.id === net.id ? ' (bạn)' : ''}${r.id === room.hostId ? ' 👑' : ''}<span class="tag">${r.fac ? FACULTIES.find((f) => f.id === r.fac).name : 'chưa chọn khoa'} ${r.ready ? '<b class="ready">· sẵn sàng</b>' : ''}</span></li>`).join('');
   $('facList').innerHTML = FACULTIES.map((f) => {
     const taker = room.roster.find((r) => r.fac === f.id);
     return `<button data-fac="${f.id}" class="${mine.fac === f.id ? 'on' : taker ? 'taken' : ''}" ${taker && taker.id !== net.id ? 'disabled' : ''}>${f.name}${taker && taker.id !== net.id ? ' · ' + escapeHtml(taker.name) : ''}</button>`;
@@ -196,6 +198,17 @@ $('startBtn').onclick = () => {
   hostIO.emit({ t: 'start', roster, cfg }, true);
 };
 function buildCollisionOnly() { return game ? game.world : null; }
+
+// voice ở lobby: không có vị trí, mọi người nghe nhau rõ như đứng cạnh; hiện ai đang nói
+setInterval(() => {
+  if (game || !room) return;
+  for (const id of voice.peers.keys()) voice.updatePeer(id, { x: 0, y: 0, z: -1 }, false, true);
+  for (const li of $('roster').querySelectorAll('li[data-id]')) {
+    const id = li.dataset.id;
+    const lv = id === net.id ? (voice.capturing ? voice.level : 0) : voice.peerLevel(id);
+    li.classList.toggle('talking', lv > 0.015);
+  }
+}, 150);
 
 // ====================================================================== đồng ý + mic check
 $('micBtn').onclick = () => { show('consent'); };
@@ -237,7 +250,8 @@ async function micCheck() {
   }
   clearInterval(vu);
   micOk = dodgeClips.length >= 4;
-  $('micStatus').textContent = micOk ? `Mic ổn · đã thu ${dodgeClips.length} câu.` : 'Thu được quá ít câu, kiểm tra lại mic.';
+  $('micStatus').textContent = micOk ? `Mic ổn · đã thu ${dodgeClips.length} câu. Mic đang mở: mọi người trong phòng nghe được bạn${ptt ? ' khi giữ V' : ''}.` : 'Thu được quá ít câu, kiểm tra lại mic.';
+  if (micOk) voice.setTransmit(!ptt);  // nói chuyện ở lobby
   show('lobby');
   renderLobby();
 }
@@ -286,14 +300,16 @@ function onFromHost(from, m) {
 // ====================================================================== clip giọng
 let clipSeq = 1;
 const chunkBuf = new Map();
-function sendClip(id, f32, dodge, text) {
+function sendClip(id, f32, dodge, text, lobby = null) {
   const i16 = f32ToI16(f32);
   voice.storeClip(id, i16);
   const b64 = int16ToB64(i16), CH = 16000;
   const n = Math.ceil(b64.length / CH);
   for (let k = 0; k < n; k++) net.broadcast({ t: 'clipc', id, i: k, n, d: b64.slice(k * CH, (k + 1) * CH) }, true);
-  toHost({ t: 'clipm', id, dodge, dur: +(f32.length / 16000).toFixed(2), text: dodge ? text : undefined });
-  asrRun(dodge ? { type: 'embed', id, text } : { type: 'asr', id, audio: f32 }).then((r) => {
+  toHost({ t: 'clipm', id, dodge, lobby: !!lobby, dur: +(f32.length / 16000).toFixed(2), text: dodge ? text : undefined });
+  // clip thu ở lobby đã nhận dạng sẵn từ trước
+  const job = lobby ? lobby.ready : asrRun(dodge ? { type: 'embed', id, text } : { type: 'asr', id, audio: f32 });
+  job.then((r) => {
     toHost({ t: 'clipt', id, text: dodge ? text : r.text, emb: r.emb });
     if (game) game.myClips.push({ id, text: dodge ? text : r.text, ms: r.ms });
   });
@@ -305,7 +321,15 @@ function onClipChunk(from, m) {
   if (e.parts[m.i] == null) { e.parts[m.i] = m.d; e.got++; }
   if (e.got === e.n) { chunkBuf.delete(m.id); voice.storeClip(m.id, b64ToInt16(e.parts.join(''))); }
 }
+// trò chuyện ở lobby cũng được thu (nhận dạng luôn, gửi cho host lúc vào trận)
+const lobbyClips = [];
 voice.onSegment = (f32) => {
+  if (!game && room && !room.started && micOk) {
+    const id = net.id + ':l' + clipSeq++;
+    lobbyClips.push({ id, f32, ready: asrRun({ type: 'asr', id, audio: f32 }) });
+    if (lobbyClips.length > 40) lobbyClips.shift();
+    return;
+  }
   if (!game || !game.alive || game.ended) return;
   sendClip(net.id + ':' + clipSeq++, f32, false);
 };
@@ -406,6 +430,7 @@ function startGame(m) {
   if (host) host.world = world;
   // gửi clip né đã thu lúc kiểm tra mic
   for (const d of dodgeClips) sendClip(net.id + ':d' + clipSeq++, d.f32, true, d.text);
+  for (const c of lobbyClips.splice(0)) sendClip(c.id, c.f32, false, null, c);
   voice.setTransmit(!ptt);
   show(null);
   $('hud').classList.remove('hidden');
@@ -607,7 +632,7 @@ document.addEventListener('mousedown', (e) => {
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   if (e.code === 'F1') { e.preventDefault(); if (DEBUG && game) toggleDebug(); return; }
-  if (!game) return;
+  if (!game) { if (e.code === 'KeyV' && ptt && micOk && room) voice.setTransmit(true); return; }
   if (e.code === 'Escape' && taskUI.isOpen) { taskUI.close(); return; }
   keys[e.code] = true;
   if (['Space', 'ControlLeft', 'ControlRight', 'KeyF'].includes(e.code)) e.preventDefault();
@@ -620,7 +645,7 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('keyup', (e) => {
   keys[e.code] = false;
-  if (e.code === 'KeyV' && ptt && game?.alive) voice.setTransmit(false);
+  if (e.code === 'KeyV' && ptt && (game ? game.alive : room)) voice.setTransmit(false);
 });
 document.addEventListener('pointerlockchange', () => {
   if (!locked && game && !taskUI.isOpen && !game.ended && game.wasLocked) $('pause').classList.remove('hidden');

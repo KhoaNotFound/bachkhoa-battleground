@@ -9,8 +9,7 @@ export const CONFIG = {
   PHASE2_AT: '01:00',
   PHASE3_AT: '04:00',
   R_HEAR: 20,                // m, bán kính nghe được giọng
-  T_ALONE: 15,               // s, đi lẻ tối thiểu trước khi ma được bắt
-  BEHIND_ANGLE: 120,         // độ
+  T_ALONE: 15,               // s, đi lẻ bao lâu thì ma tới bắt chuyện
   MAX_GHOSTS: [1, 2, 3],     // theo pha
   GHOST_RESPAWN: 60,         // s
   NOISE_RADIUS: 15,          // m
@@ -29,7 +28,7 @@ export const CONFIG = {
   OCCLUSION_LOWPASS: 800, OCCLUSION_GAIN: 0.45,
   TALK_DIST: 3,              // m, APPROACH -> TALK
   GRAB_DIST: 1.5,            // m
-  LOOK_AT_LEAVE: 2,          // s người chơi nhìn thẳng ma thì ma rời đi
+  LURE_KILL_PHASE: 2,        // từ pha này ma được giết người đã bị dụ tới chỗ vắng (spec gốc: chỉ pha 3)
   GHOST_SPEED: 3.2,          // m/s (ghi đè bằng tốc độ trung bình của người bị giả dạng nếu có)
   SHOOT_RANGE: 30,
   TASK_WRONG_LOCK: 30,       // s khoá task Máy tính / Hoá sau khi làm sai

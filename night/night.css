@@ -133,3 +133,5 @@ canvas.frame { width: 100%; background: #0b1220; border-radius: 10px; }
 #debug td, #debug th { border-bottom: 1px solid #1d2a40; padding: 2px 4px; text-align: left; vertical-align: top; }
 #debug h4 { margin: 8px 0 4px; color: var(--accent); }
 #debug button { font-size: 12px; padding: 2px 8px; }
+.roster li.talking { border-color: var(--good); box-shadow: 0 0 0 1px var(--good) inset; }
+.roster li.talking::after { content: '🔊'; margin-left: 6px; }

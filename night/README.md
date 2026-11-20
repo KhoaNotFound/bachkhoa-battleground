@@ -22,6 +22,26 @@ Yêu cầu sau đó là chơi online với bạn bè, không localhost, nên b�
 Mỗi client tự nhận dạng giọng của chính mình rồi gửi chữ + vector cho host; host tự gắn ngữ cảnh
 (phòng, task, người ở gần, `heard_by_ghost`) từ trạng thái game của nó.
 
+## Ma (đã chỉnh theo góp ý, tham khảo cơ chế mimic của MIMESIS)
+
+Ma không đứng sẵn trên bản đồ:
+
+- **Nấp nghe (LURK):** luôn ở ngoài tầm nhìn của mọi người nhưng trong R_HEAR của một người để thu câu nói
+  (`heard_by_ghost`). Bị nhìn thấy quá 2 giây thì lủi đi rồi tan; nấp đủ lâu cũng tan và xuất hiện chỗ khác.
+- **Lướt qua (pha 1):** thoáng thấy một bóng đồng đội ở xa rồi khuất mất.
+- **Chạm mặt (pha 2 trở đi, người chơi đi lẻ ≥ `T_ALONE`):** chạy tới khi còn khuất, đi bộ khi lộ diện, hỏi 1–2 câu
+  (trả lời nếu bị hỏi vặn), rồi rủ "qua đây" và chạy như người tới một phòng vắng, chờ và gọi tiếp nếu người chơi tụt lại.
+  Người chơi theo tới chỗ vắng mà không còn ai trong R_HEAR thì bị bắt (`LURE_KILL_PHASE`, mặc định pha 2).
+  Không theo nữa thì ma đi khuất rồi tan.
+- Mỗi người chết thì số ma tối đa tăng thêm 1.
+
+Điều này thay cho luật bắt 4 điều kiện ở mục 8.7 của spec (pha 3 + đi lẻ + đứng sau lưng + < 1.5 m).
+
+## Voice ở lobby
+
+Kiểm tra mic xong là mọi người trong phòng nói chuyện được với nhau ngay ở lobby (không có vị trí, nghe rõ như
+đứng cạnh). Câu nói ở lobby cũng được nhận dạng và đưa vào kho clip lúc vào trận, coi như ma đã nghe.
+
 ## Chạy thử
 
 - Online: mở trang, tạo phòng, gửi mã 5 ký tự hoặc link mời cho bạn bè. Tối đa 5, đủ 2 người là bắt đầu.
