@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from './util.js';
 import { pointInPoly } from './physics.js';
+import * as TX from './textures.js';
 
 // Map loaded from the campus OBJ export, converted by tools/build_obj_map.py into
 // assets/map/campus.{bin,json} + minimap.png. Coordinates are meters, Y up.
@@ -31,27 +32,59 @@ export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}
   CAMPUS_POLY = meta.boundary;
 
   // ---------- render meshes ----------
+  // Every triangle has a material (see tools/build_obj_map.py). The export has no UVs, so they are
+  // box-projected here from each face's normal: facades get one window row per 3.9 m floor.
   const { min, scale } = meta.quant;
+  const q = new Uint16Array(bin);
+  const texFor = {
+    facade: (m) => TX.facade(m.style), roof: (m) => TX.roof(m.color, m.style),
+    asphalt: () => TX.asphalt(), pavers: () => TX.pavers(), grass: () => TX.grass(), concrete: () => TX.roof('#cfccc2'),
+  };
+  const TILE = { facade: 4, roof: 4, asphalt: 6, pavers: 4, grass: 6, concrete: 4 };
+  const FLOOR_H = 3.9;
   const meshes = [];
-  for (const o of meta.objects) {
-    const q = new Uint16Array(bin, o.v[0], o.v[1] * 3);
-    const pos = new Float32Array(q.length);
-    for (let i = 0; i < q.length; i += 3) {
-      pos[i] = min[0] + q[i] * scale[0];
-      pos[i + 1] = min[1] + q[i + 1] * scale[1];
-      pos[i + 2] = min[2] + q[i + 2] * scale[2];
+  for (const mt of meta.materials) {
+    const [t0, nt] = mt.tris;
+    if (!nt) continue;
+    const n = nt * 9, pos = new Float32Array(n), nor = new Float32Array(n);
+    const textured = !!texFor[mt.kind];
+    const uv = textured ? new Float32Array(nt * 6) : null;
+    const tile = TILE[mt.kind] || 4;
+    for (let t = 0; t < nt; t++) {
+      const b = (t0 + t) * 9, o = t * 9;
+      for (let k = 0; k < 9; k += 3) {
+        pos[o + k] = min[0] + q[b + k] * scale[0];
+        pos[o + k + 1] = min[1] + q[b + k + 1] * scale[1];
+        pos[o + k + 2] = min[2] + q[b + k + 2] * scale[2];
+      }
+      const ax = pos[o + 3] - pos[o], ay = pos[o + 4] - pos[o + 1], az = pos[o + 5] - pos[o + 2];
+      const bx = pos[o + 6] - pos[o], by = pos[o + 7] - pos[o + 1], bz = pos[o + 8] - pos[o + 2];
+      let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+      const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+      for (let k = 0; k < 9; k += 3) { nor[o + k] = nx; nor[o + k + 1] = ny; nor[o + k + 2] = nz; }
+      if (!uv) continue;
+      const anx = Math.abs(nx), any = Math.abs(ny), anz = Math.abs(nz);
+      for (let k = 0, u = t * 6; k < 3; k++, u += 2) {
+        const x = pos[o + k * 3], y = pos[o + k * 3 + 1], z = pos[o + k * 3 + 2];
+        if (any >= anx && any >= anz) { uv[u] = x / tile; uv[u + 1] = -z / tile; }
+        else {
+          uv[u] = (anx > anz ? z * Math.sign(nx) : -x * Math.sign(nz)) / tile;
+          uv[u + 1] = y / (mt.kind === 'facade' ? FLOOR_H : tile);
+        }
+      }
     }
-    const idx = o.i[2] === 32 ? new Uint32Array(bin, o.i[0], o.i[1]) : new Uint16Array(bin, o.i[0], o.i[1]);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setIndex(new THREE.BufferAttribute(idx, 1));
-    g.computeVertexNormals();
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    if (uv) g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     g.computeBoundingSphere();
-    // The export has no materials and mixed winding, so draw both sides with flat shading.
-    const mat = new THREE.MeshLambertMaterial({ color: o.color, flatShading: true, side: THREE.DoubleSide });
-    if (o.ground) Object.assign(mat, { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    // mixed winding in the export -> draw both sides
+    const mat = new THREE.MeshLambertMaterial(textured
+      ? { map: texFor[mt.kind](mt), side: THREE.DoubleSide }
+      : { color: mt.color, side: THREE.DoubleSide });
+    if (mt.ground) Object.assign(mat, { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     const m = new THREE.Mesh(g, mat);
-    m.castShadow = !o.ground && !lowGfx;
+    m.castShadow = !mt.ground && !lowGfx;
     m.receiveShadow = true;
     scene.add(m);
     meshes.push(m);

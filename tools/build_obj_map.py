@@ -39,6 +39,15 @@ GROUND = {15: '#8e8c84', 34: '#b9b4a6', 21: '#7d8288', 102: '#7d8288', 7: '#6f9a
 TREES = {13: '#3f8a3a', 40: '#4a9a40', 30: '#5e8f3c'}
 NO_COLLIDE = {15, 34, 13, 40}  # road/pad = physics ground plane; tree canopies don't block movement
 OVERRIDE = {41: '#e3dccb'}  # walls / building shells
+# textured ground surfaces
+GROUND_KIND = {15: 'asphalt', 34: 'pavers', 7: 'grass', 77: 'grass'}
+# per-building styles (textures.js facade() styles / roof colors), weighted toward the campus look
+FACADES = ['cream', 'yellow', 'white', 'grey', 'corridor']
+FACADE_W = [0.3, 0.25, 0.2, 0.1, 0.15]
+FACADE_COL = {'cream': '#ece3cf', 'yellow': '#e9cf8c', 'white': '#eef1f3', 'grey': '#c3c7c9', 'corridor': '#e8e2d2'}
+ROOFS = [('#c8664e', 'tile'), ('#b9bdbf', 'flat'), ('#8fb4d4', 'metal'), ('#cfcfc8', 'flat')]
+ROOF_W = [0.35, 0.25, 0.2, 0.2]
+KIND_COL = {'asphalt': '#4a4f55', 'pavers': '#bdbdb5', 'grass': '#5f9a45', 'concrete': '#cfccc2'}
 
 
 def load(src):
@@ -240,59 +249,105 @@ def main():
             break
     print(f'spawns: {len(spawns)}')
 
-    # ---- decimate the render mesh to the triangle budget ----
+    # ---- render mesh: decimate (only if over budget), then a material per triangle ----
     total_area = sum(o['st']['area'] for o in objs)
     dens = args.tris / total_area
     for _ in range(20):  # solve for density so the sum hits the budget
         tot = sum(min(len(o['f']), max(60, o['st']['area'] * dens)) for o in objs)
         dens *= args.tris / tot
-    blob = bytearray()
-    out_objs = []
-    allmin = np.array([x0, -50.0, z0])
-    span = np.array([x1 - x0, 100.0, z1 - z0])
-    qscale = span / 65535
-    ntris = 0
+
+    # one label per building (connected tall solid area) -> its own facade + roof style
+    blab, nb = ndimage.label(has & (hiq >= 4))
+    brng = np.random.default_rng(268)
+    bfac = brng.choice(len(FACADES), nb + 1, p=FACADE_W)
+    broof = brng.choice(len(ROOFS), nb + 1, p=ROOF_W)
+
+    mats, mat_ids = [], {}
+
+    def mat(kind, color=None, style=None, ground=False):
+        key = (kind, color, style)
+        if key not in mat_ids:
+            mat_ids[key] = len(mats)
+            mats.append({'kind': kind, 'color': color, 'style': style, 'ground': ground})
+        return mat_ids[key]
+
+    tri_pos, tri_mat = [], []
     for o in objs:
         target = int(min(len(o['f']), max(60, o['st']['area'] * dens)))
         v, f = simplify(o, target)
-        q = np.clip(np.round((v - allmin) / qscale), 0, 65535).astype(np.uint16)
-        while len(blob) % 4:
-            blob += b'\0'
-        voff = len(blob)
-        blob += q.tobytes()
-        while len(blob) % 4:
-            blob += b'\0'
-        ioff = len(blob)
-        big = len(v) > 65535
-        blob += f.astype(np.uint32 if big else np.uint16).tobytes()
-        ntris += len(f)
-        out_objs.append({'id': o['id'], 'color': o['color'], 'tree': o['id'] in TREES, 'ground': o['id'] in GROUND,
-                         'v': [voff, len(v)], 'i': [ioff, len(f) * 3, 32 if big else 16]})
+        T = v[f]
+        n = len(T)
+        i = o['id']
+        if i in GROUND_KIND:
+            kind = GROUND_KIND[i]
+            m = np.full(n, mat(kind, None if kind != 'plain' else o['color'], ground=True))
+        elif i in GROUND:
+            m = np.full(n, mat('concrete', None, ground=True))
+        elif i in TREES:
+            m = np.full(n, mat('leaves', o['color']))
+        else:
+            m = np.full(n, mat('plain', o['color']))
+            if o['st']['area'] > 400:  # major building materials: textured by face orientation
+                N = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+                ny = np.abs(N[:, 1]) / (np.linalg.norm(N, axis=1) + 1e-12)
+                C = T.mean(1)
+                ix = np.clip(((C[:, 0] - x0) / RES).astype(int), 0, W - 1)
+                iz = np.clip(((C[:, 2] - z0) / RES).astype(int), 0, H - 1)
+                # sample the label slightly around the centroid: walls sit on the region edge
+                lb = ndimage.grey_dilation(blab, size=3)[iz, ix]
+                wall = (lb > 0) & (ny < 0.4) & (C[:, 1] > 0.3)
+                rf = (lb > 0) & (ny > 0.7) & (C[:, 1] > 3)
+                # narrow faces (pillars, ledges) get the plain wall color instead of windows
+                wide = np.ptp(T[:, :, 0], axis=1) ** 2 + np.ptp(T[:, :, 2], axis=1) ** 2 > 1.5 ** 2
+                for k in np.unique(lb[wall]):
+                    style = FACADES[bfac[k]]
+                    m[wall & (lb == k) & wide] = mat('facade', None, style)
+                    m[wall & (lb == k) & ~wide] = mat('plain', FACADE_COL[style])
+                for k in np.unique(lb[rf]):
+                    col, pat = ROOFS[broof[k]]
+                    m[rf & (lb == k)] = mat('roof', col, pat)
+        tri_pos.append(T)
+        tri_mat.append(m)
+    T = np.concatenate(tri_pos)
+    M = np.concatenate(tri_mat)
+    order = np.argsort(M, kind='stable')
+    T, M = T[order], M[order]
+    allmin = np.array([x0, -50.0, z0])
+    span = np.array([x1 - x0, 100.0, z1 - z0])
+    qscale = span / 65535
+    q = np.clip(np.round((T.reshape(-1, 3) - allmin) / qscale), 0, 65535).astype(np.uint16)
     with open(os.path.join(args.out, 'campus.bin'), 'wb') as fh:
-        fh.write(blob)
-    print(f'render mesh: {ntris} tris, {len(blob) / 1e6:.1f} MB')
+        fh.write(q.tobytes())
+    counts = np.bincount(M, minlength=len(mats))
+    start = 0
+    for k, mt in enumerate(mats):
+        mt['tris'] = [int(start), int(counts[k])]
+        start += counts[k]
+    print(f'render mesh: {len(T)} tris, {len(mats)} materials, {q.nbytes / 1e6:.1f} MB')
 
     # ---- minimap: color of the topmost surface per cell ----
+    def mm_color(mt):
+        if mt['kind'] == 'facade': return FACADE_COL[mt['style']]
+        return mt['color'] or KIND_COL[mt['kind']]
+    pal = np.array([[int(mm_color(mt)[k:k + 2], 16) for k in (1, 3, 5)] for mt in mats], np.float64)
     top = np.full((H, W), -np.inf)
-    col = np.zeros((H, W, 3), np.uint8)
+    col = np.zeros((H, W, 3), np.float64)
     col[:] = (43, 49, 56)
-    for o in objs:
-        if o['id'] in (15, 39, 24):
-            continue
-        T = o['v'][o['f']]
-        P, _ = sample_points(T, RES * 2)
-        ix = ((P[:, 0] - x0) / RES).astype(int)
-        iz = ((P[:, 2] - z0) / RES).astype(int)
-        ok = (ix >= 0) & (ix < W) & (iz >= 0) & (iz < H)
-        ix, iz, y = ix[ok], iz[ok], P[ok, 1]
-        cur = np.full((H, W), -np.inf)
-        np.maximum.at(cur, (iz, ix), y)
-        m = cur > top
-        top[m] = cur[m]
-        rgb = tuple(int(o['color'][k:k + 2], 16) for k in (1, 3, 5))
-        col[m] = rgb
-    shade = np.clip(0.75 + np.where(np.isfinite(top), top, 0) / 60, 0.75, 1.15)[..., None]
-    img = cv2.medianBlur(np.clip(col * shade, 0, 255).astype(np.uint8), 5)  # overlapping surfaces speckle
+    keep = (T[:, :, 0].min(1) > x0) & (T[:, :, 0].max(1) < x1) & (T[:, :, 1].min(1) > -1)
+    P, idx = sample_points(T[keep], RES * 2)
+    Mk = M[keep][idx]
+    ix = ((P[:, 0] - x0) / RES).astype(int)
+    iz = ((P[:, 2] - z0) / RES).astype(int)
+    ok = (ix >= 0) & (ix < W) & (iz >= 0) & (iz < H)
+    ix, iz, y, Mk = ix[ok], iz[ok], P[ok, 1], Mk[ok]
+    o = np.lexsort((y, iz * W + ix))  # last per cell = highest
+    cell = (iz * W + ix)[o]
+    last = np.r_[cell[1:] != cell[:-1], True]
+    sel = o[last]
+    top.flat[cell[last]] = y[sel]
+    col.reshape(-1, 3)[cell[last]] = pal[Mk[sel]]
+    shade = np.clip(0.8 + np.where(np.isfinite(top), top, 0) / 60, 0.8, 1.15)[..., None]
+    img = cv2.medianBlur(np.clip(col * shade, 0, 255).astype(np.uint8), 3)
     Image.fromarray(img).save(os.path.join(args.out, 'minimap.png'), optimize=True)
 
     meta = {
@@ -301,7 +356,7 @@ def main():
         'grid': {'x0': x0, 'z0': z0, 'res': RES, 'w': W, 'h': H},
         'bbox': [round(float(min(p[0] for p in boundary)), 2), round(float(min(p[1] for p in boundary)), 2),
                  round(float(max(p[0] for p in boundary)), 2), round(float(max(p[1] for p in boundary)), 2)],
-        'objects': out_objs, 'boundary': boundary, 'spawns': spawns, 'boxes': boxes,
+        'materials': mats, 'boundary': boundary, 'spawns': spawns, 'boxes': boxes,
     }
     with open(os.path.join(args.out, 'campus.json'), 'w') as fh:
         json.dump(meta, fh, separators=(',', ':'))
