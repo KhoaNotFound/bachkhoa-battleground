@@ -30,6 +30,11 @@ CM = 0.01          # OBJ unit -> m
 GROUND_EPS = 0.15  # below this, a cell is just ground (roads sit at -0.2, campus pad at 0)
 HEAD = 2.0         # geometry starting above this leaves room to walk under
 QH = 0.25          # height quantization for merging boxes
+TRUNK_SAMPLE = 2.2  # tree geometry below this is trunk
+TRUNK_H = 3.0      # trunk collider height (too tall to jump onto)
+CLIMB = 1.0        # highest ledge a jump reaches (jump 6.8 m/s, gravity 21 -> 1.1 m apex)
+SKY = 400.0        # top of invisible cage pillars
+CEIL_MARGIN = 3.5  # ceiling above the highest legit floor (jump 1.1 + body 1.8 + slack)
 
 # Material classes. The export has no .mtl, so every object (= one material) gets a color
 # picked from its role. Unlisted objects fall back to a rule on their normals.
@@ -37,7 +42,7 @@ GROUND = {15: '#8e8c84', 34: '#b9b4a6', 21: '#7d8288', 102: '#7d8288', 7: '#6f9a
           38: '#a8a395', 77: '#6f9a4f', 82: '#7d8288', 48: '#c9c3b2', 89: '#c9c3b2', 117: '#c9c3b2',
           47: '#a8a395', 32: '#a8a395', 5: '#9a958a', 1: '#9a958a'}
 TREES = {13: '#3f8a3a', 40: '#4a9a40', 30: '#5e8f3c'}
-NO_COLLIDE = {15, 34, 13, 40}  # road/pad = physics ground plane; tree canopies don't block movement
+NO_COLLIDE = {15, 34} | set(TREES)  # road/pad = physics ground plane; trees only collide by their trunks (below)
 OVERRIDE = {41: '#e3dccb'}  # walls / building shells
 # textured ground surfaces
 GROUND_KIND = {15: 'asphalt', 34: 'pavers', 7: 'grass', 77: 'grass', 21: 'pitch'}  # 21 = big football field
@@ -194,6 +199,19 @@ def main():
         ok = (ix >= 0) & (ix < W) & (iz >= 0) & (iz < H)
         np.minimum.at(lo, (iz[ok], ix[ok]), P[ok, 1])
         np.maximum.at(hi, (iz[ok], ix[ok]), P[ok, 1])
+    # tree trunks: geometry of tree objects near the ground becomes a short solid post.
+    # (Canopies used to make tall columns that players could climb by spamming jump.)
+    for o in objs:
+        if o['id'] not in TREES:
+            continue
+        T = o['v'][o['f']]
+        P, _ = sample_points(T, RES)
+        P = P[(P[:, 1] > GROUND_EPS) & (P[:, 1] < TRUNK_SAMPLE)]
+        ix = ((P[:, 0] - x0) / RES).astype(int)
+        iz = ((P[:, 2] - z0) / RES).astype(int)
+        ok = (ix >= 0) & (ix < W) & (iz >= 0) & (iz < H)
+        lo[iz[ok], ix[ok]] = np.minimum(lo[iz[ok], ix[ok]], GROUND_EPS)
+        hi[iz[ok], ix[ok]] = np.maximum(hi[iz[ok], ix[ok]], TRUNK_H)
     has = hi > GROUND_EPS
     lo = np.where(lo < HEAD, 0.0, lo)
     # fine steps near the ground (curbs, stairs), coarser up high so more cells merge
@@ -248,6 +266,40 @@ def main():
         if len(spawns) >= 90:
             break
     print(f'spawns: {len(spawns)}')
+
+    # ---- virtual cage: what can a player legitimately stand on? ----
+    # BFS over cells from the spawns: walking steps up at most CLIMB (a jump), down any amount.
+    # Solid columns that are never reached get an invisible pillar up to the sky (players can't
+    # land on them via physics glitches), slab tops (walkway roofs) always do, and a ceiling
+    # sits just above the highest reachable floor.
+    column = has & (loq == 0)
+    floor_h = np.where(column, hiq, 0.0)
+    reach = np.zeros((H, W), bool)
+    from collections import deque
+    dq = deque()
+    for sx, sz in spawns:
+        j, i = int((sz - z0) / RES), int((sx - x0) / RES)
+        if not reach[j, i]:
+            reach[j, i] = True
+            dq.append((j, i))
+    inside_full = np.zeros((H, W), np.uint8)
+    cv2.fillPoly(inside_full, [c.astype(np.int32)], 1)
+    inside_full = inside_full.astype(bool)
+    while dq:
+        j, i = dq.popleft()
+        h0 = floor_h[j, i]
+        for dj, di in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            jj, ii = j + dj, i + di
+            if 0 <= jj < H and 0 <= ii < W and not reach[jj, ii] and inside_full[jj, ii] and floor_h[jj, ii] - h0 <= CLIMB:
+                reach[jj, ii] = True
+                dq.append((jj, ii))
+    pillar = column & ~reach
+    cage = merge_boxes(np.zeros((H, W)), np.full((H, W), SKY), pillar, x0, z0)
+    slab = has & (loq > 0)
+    cage += merge_boxes(hiq, np.full((H, W), SKY), slab, x0, z0)
+    max_floor = float(floor_h[reach].max()) if reach.any() else 0.0
+    ceiling = round(max_floor + CEIL_MARGIN, 2)
+    print(f'cage: {int(reach.sum())} reachable cells, max floor {max_floor} m, {len(cage)} cage boxes, ceiling {ceiling} m')
 
     # ---- render mesh: decimate (only if over budget), then a material per triangle ----
     total_area = sum(o['st']['area'] for o in objs)
@@ -359,7 +411,7 @@ def main():
         'grid': {'x0': x0, 'z0': z0, 'res': RES, 'w': W, 'h': H},
         'bbox': [round(float(min(p[0] for p in boundary)), 2), round(float(min(p[1] for p in boundary)), 2),
                  round(float(max(p[0] for p in boundary)), 2), round(float(max(p[1] for p in boundary)), 2)],
-        'materials': mats, 'boundary': boundary, 'spawns': spawns, 'boxes': boxes,
+        'materials': mats, 'boundary': boundary, 'spawns': spawns, 'boxes': boxes, 'cage': cage, 'ceiling': ceiling,
     }
     with open(os.path.join(args.out, 'campus.json'), 'w') as fh:
         json.dump(meta, fh, separators=(',', ':'))

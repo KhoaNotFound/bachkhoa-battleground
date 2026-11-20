@@ -298,6 +298,7 @@ function die(killerId, m) {
   vfx.deathFx(me.pos);
   hud.show(false);
   hud.setScope(false);
+  hud.drawBigMap(false);
   $('pause').classList.add('hidden');
   $('death').classList.remove('hidden');
   $('deathBy').innerHTML = killer ? `bởi <span style="color:${killer.color}">${escapeHtml(killer.name)}</span>` : '';
@@ -919,6 +920,7 @@ function frame() {
       renderer.render(vm.scene, vm.camera);
     }
     hud.drawMinimap(me.pos.x, me.pos.z, me.yaw, peers);
+    hud.drawBigMap(!!keys.KeyM, me.pos.x, me.pos.z, me.yaw);
     hud.scoreboard(showBoard, allPlayers());
   } else if (state === 'lobby') {
     if (now - lobbyRefresh > 1000) { lobbyRefresh = now; renderLobby(); }
@@ -932,4 +934,4 @@ function frame() {
 }
 
 // test hooks
-window.__game = { get inspector() { return inspector; }, me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
+window.__game = { audio, get inspector() { return inspector; }, me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };

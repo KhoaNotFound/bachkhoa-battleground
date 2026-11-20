@@ -1,4 +1,6 @@
-// Fully synthesized sound effects (no assets).
+// Synthesized sound effects, plus a recorded AWM shot / reload (assets/audio/awm.mp3).
+// Segments of that file (seconds): the shot and its tail, then the reload.
+const AWM_SAMPLE = { url: new URL('../assets/audio/awm.mp3', import.meta.url), shot: [2.66, 0.94], reload: [3.6, 2.0] };
 export class Audio {
   constructor() {
     this.ctx = null;
@@ -21,6 +23,7 @@ export class Audio {
     this.reverb.connect(this.revGain).connect(this.master);
     this.noiseBuf = this.makeNoise(2);
     this.startAmbience();
+    fetch(AWM_SAMPLE.url).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((buf) => { this.awmBuf = buf; }).catch(() => {});
   }
   setVolume(v) { this.volume = v; if (this.master) this.master.gain.value = v; }
   makeNoise(sec) {
@@ -85,10 +88,22 @@ export class Audio {
     o.connect(g).connect(dest);
     o.start(t); o.stop(t + dur + 0.05);
   }
+  // play a [start, duration] slice of a decoded buffer into a node
+  slice(buf, [start, dur], node, t, gain = 1) {
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const g = this.ctx.createGain(); g.gain.value = gain;
+    src.connect(g).connect(node);
+    src.start(t, start, dur);
+  }
   awm(pos) {
     if (!this.ctx) return;
     const o = this.out(pos, 18, 0.8);
     const t = this.ctx.currentTime + o.delay;
+    if (this.awmBuf) {
+      this.slice(this.awmBuf, AWM_SAMPLE.shot, o.node, t, 1.3);
+      this.slice(this.awmBuf, AWM_SAMPLE.shot, o.rev, t, 0.25 + Math.min(0.6, o.dist / 300));
+      return;
+    }
     const far = Math.min(1, o.dist / 250);
     // crack
     this.noise(o.node, t, 0.12, { type: 'highpass', f0: 2500 - far * 1800, f1: 800, gain: 1.4 * (1 - far * 0.5) });
@@ -115,6 +130,7 @@ export class Audio {
   reload() {
     if (!this.ctx) return;
     const d = this.master, t = this.ctx.currentTime;
+    if (this.awmBuf) { this.slice(this.awmBuf, AWM_SAMPLE.reload, d, t + 0.3, 1.4); return; }
     const click = (tt, f, g = 0.5) => this.noise(d, tt, 0.06, { type: 'bandpass', f0: f, q: 5, gain: g });
     click(t + 0.35, 1200); click(t + 0.4, 900, 0.3); click(t + 1.4, 1500); click(t + 1.55, 2200, 0.6); click(t + 2.1, 1800); click(t + 2.35, 2400);
   }

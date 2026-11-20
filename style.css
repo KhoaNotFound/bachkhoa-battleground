@@ -204,3 +204,6 @@ button { font-family: inherit; cursor: pointer; }
 .inspect-toast { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; background: rgba(0,0,0,0.5); padding: 8px 14px; border-radius: 10px; opacity: 0; transition: opacity .2s; }
 .inspect-toast.on { opacity: 1; }
 .inspect-ui.bare .inspect-coords, .inspect-ui.bare .inspect-help { display: none; }
+
+/* full map while holding M */
+#bigmap { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 14px; border: 2px solid rgba(255,255,255,0.35); box-shadow: 0 10px 40px rgba(0,0,0,0.55); opacity: 0.95; pointer-events: none; }

@@ -53,6 +53,33 @@ export class HUD {
     this.mapImg = c; this.mapS = S; this.mapX = X; this.mapZ = Z;
   }
   ping(x, z) { this.pings.push({ x, z, t: performance.now() }); }
+  // full map, north up (hold M)
+  drawBigMap(show, px, pz, yaw) {
+    const c = this.big || (this.big = document.getElementById('bigmap'));
+    if (!c) return;
+    c.classList.toggle('hidden', !show);
+    if (!show) return;
+    const img = this.mapImg, s = Math.min(innerWidth * 0.8 / img.width, innerHeight * 0.8 / img.height);
+    const W = Math.round(img.width * s), H = Math.round(img.height * s);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0, W, H);
+    const now = performance.now();
+    for (const p of this.pings) {
+      const a = 1 - (now - p.t) / 2500;
+      if (a <= 0) continue;
+      g.fillStyle = `rgba(255,70,70,${a})`;
+      g.beginPath(); g.arc(this.mapX(p.x) * s, this.mapZ(p.z) * s, 6, 0, 7); g.fill();
+    }
+    g.save();
+    g.translate(this.mapX(px) * s, this.mapZ(pz) * s);
+    g.rotate(-yaw);
+    g.fillStyle = '#ffc83d'; g.strokeStyle = '#000'; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(0, -11); g.lineTo(8, 8); g.lineTo(0, 4); g.lineTo(-8, 8); g.closePath(); g.fill(); g.stroke();
+    g.restore();
+    g.fillStyle = '#fff'; g.font = '700 16px "Chakra Petch"'; g.textAlign = 'center'; g.textBaseline = 'top';
+    g.fillText('B ▲', W / 2, 8);
+  }
   drawMinimap(px, pz, yaw, others) {
     const g = this.mm, R = 100, scale = 0.9; // zoom
     g.clearRect(0, 0, 200, 200);

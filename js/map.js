@@ -103,6 +103,13 @@ export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}
 
   // ---------- collision ----------
   for (const b of meta.boxes) world.add(b[0], b[1], b[2], b[3], b[4], b[5], { mat: 'concrete' });
+  // virtual cage (tools/build_obj_map.py): invisible pillars over everything a player can't
+  // legitimately reach, plus a ceiling. They block movement only, never bullets.
+  for (const b of meta.cage || []) world.add(b[0], b[1], b[2], b[3], b[4], b[5], { bullet: false, mat: 'none' });
+  if (meta.ceiling) {
+    const g = meta.grid;
+    world.add(g.x0, meta.ceiling, g.z0, g.x0 + g.w * g.res, 400, g.z0 + g.h * g.res, { bullet: false, mat: 'none' });
+  }
   // invisible tall wall along the campus boundary so nobody leaves
   const WB = CAMPUS_POLY;
   for (let i = 0; i < WB.length; i++) {

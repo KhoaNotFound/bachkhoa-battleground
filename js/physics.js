@@ -225,10 +225,13 @@ export class Mover {
       // vertical
       p.y += st.vel.y * sdt;
       const hits = this.collect(p.x, p.y, p.z, h);
+      // Only land on a box we actually fell onto this substep, and only bump our head on a box
+      // we rose into. Overlaps from the side are left to the horizontal push-out: snapping to the
+      // top there let players climb trees / walls by spamming jump.
+      const fall = Math.max(0, -st.vel.y * sdt) + 0.06;
       for (const b of hits) {
-        if (st.vel.y <= 0 && p.y < b.max[1] && p.y > b.max[1] - 1.2) { p.y = b.max[1]; st.vel.y = 0; st.onGround = true; }
-        else if (st.vel.y > 0) { p.y = b.min[1] - h; st.vel.y = 0; }
-        else { p.y = b.max[1]; st.vel.y = 0; st.onGround = true; }
+        if (st.vel.y <= 0 && p.y < b.max[1] && p.y > b.max[1] - fall) { p.y = b.max[1]; st.vel.y = 0; st.onGround = true; }
+        else if (st.vel.y > 0 && p.y + h - b.min[1] < st.vel.y * sdt + 0.06) { p.y = b.min[1] - h; st.vel.y = 0; }
       }
       if (p.y <= 0) { p.y = 0; if (st.vel.y < 0) st.vel.y = 0; st.onGround = true; }
     }
