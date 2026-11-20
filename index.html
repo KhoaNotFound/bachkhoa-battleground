@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Bách Khoa Battleground</title>
+<meta name="description" content="Game bắn súng nhiều người chơi trên trình duyệt, lấy bối cảnh khuôn viên Trường Đại học Bách Khoa. Chỉ có nắm đấm và AWM.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='26' fill='none' stroke='%231e88e5' stroke-width='6'/%3E%3Cpath d='M32 2v18M32 44v18M2 32h18M44 32h18' stroke='%23ff5252' stroke-width='5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Chakra+Petch:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- ============ LOADING ============ -->
+<div id="loading" class="screen">
+  <div class="load-box">
+    <div class="logo-mark"><span>BK</span></div>
+    <div class="load-title">BÁCH KHOA <b>BATTLEGROUND</b></div>
+    <div class="load-bar"><i id="loadFill"></i></div>
+    <div id="loadText" class="load-text">Đang dựng khuôn viên trường…</div>
+  </div>
+</div>
+
+<!-- ============ LOBBY ============ -->
+<div id="lobby" class="screen hidden">
+  <div class="lobby-grid">
+    <section class="panel main-panel">
+      <div class="brand">
+        <div class="logo-mark small"><span>BK</span></div>
+        <div>
+          <h1>BÁCH KHOA<br><b>BATTLEGROUND</b></h1>
+          <p class="sub">268 Lý Thường Kiệt · Đấu tự do · Mỗi người 100 HP</p>
+        </div>
+      </div>
+
+      <label class="field">
+        <span>Tên của bạn</span>
+        <input id="nameInput" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Sinh viên K24">
+      </label>
+
+      <div class="field">
+        <span>Màu áo</span>
+        <div id="colorRow" class="color-row"></div>
+      </div>
+
+      <button id="playBtn" class="play-btn" disabled>
+        <span class="play-label">VÀO TRẬN</span>
+        <span class="play-sub" id="playSub">Đang kết nối…</span>
+      </button>
+
+      <div class="loadout">
+        <div class="slot"><kbd>1</kbd><div><b>Nắm đấm</b><small>25 sát thương · cận chiến</small></div></div>
+        <div class="slot"><kbd>2</kbd><div><b>AWM</b><small>Headshot hạ ngay · thân 85</small></div></div>
+      </div>
+
+      <details class="settings">
+        <summary>Cài đặt</summary>
+        <label class="row"><span>Độ nhạy chuột</span><input id="sensInput" type="range" min="0.2" max="3" step="0.05"><output id="sensOut"></output></label>
+        <label class="row"><span>Âm lượng</span><input id="volInput" type="range" min="0" max="1" step="0.05"><output id="volOut"></output></label>
+        <label class="row check"><input id="lowGfx" type="checkbox"><span>Đồ hoạ thấp (máy yếu)</span></label>
+      </details>
+    </section>
+
+    <section class="panel side-panel">
+      <div class="side-head">
+        <h2>Trong phòng</h2>
+        <span id="netBadge" class="badge">…</span>
+      </div>
+      <ol id="lobbyList" class="lobby-list"></ol>
+      <div class="side-head"><h2>Diễn biến</h2></div>
+      <ul id="lobbyFeed" class="lobby-feed"></ul>
+      <div class="controls">
+        <h3>Điều khiển</h3>
+        <div class="kb"><kbd>W A S D</kbd> di chuyển <kbd>Shift</kbd> chạy <kbd>Space</kbd> nhảy <kbd>C</kbd> ngồi</div>
+        <div class="kb"><kbd>Chuột trái</kbd> bắn/đấm <kbd>Chuột phải</kbd> ngắm scope <kbd>R</kbd> nạp đạn</div>
+        <div class="kb"><kbd>1</kbd><kbd>2</kbd><kbd>Q</kbd> đổi vũ khí <kbd>Tab</kbd> bảng điểm <kbd>Esc</kbd> tạm dừng</div>
+        <p class="tip">Cầu thang ngoài trời dẫn lên mái A1, B1, C1, C5 và nhà phụ B10: chỗ ngắm bắn rất tốt.</p>
+      </div>
+    </section>
+  </div>
+  <div class="credit">Bản đồ được dựng lại theo bố cục khuôn viên ĐH Bách Khoa TP.HCM · Game làm cho vui, không phải sản phẩm chính thức của trường</div>
+  <div id="mobileWarn" class="mobile-warn hidden">Game cần bàn phím và chuột. Hãy mở trên máy tính nhé!</div>
+</div>
+
+<!-- ============ HUD ============ -->
+<div id="hud" class="hidden">
+  <div id="crosshair" class="crosshair">
+    <i class="ch-dot"></i><i class="ch l"></i><i class="ch r"></i><i class="ch t"></i><i class="ch b"></i>
+  </div>
+  <div id="hitmarker" class="hitmarker"><i></i><i></i><i></i><i></i></div>
+  <div id="scope" class="scope hidden">
+    <svg viewBox="-500 -500 1000 1000" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <radialGradient id="lensTint" r="0.5">
+          <stop offset="0.82" stop-color="#000" stop-opacity="0"/>
+          <stop offset="1" stop-color="#000" stop-opacity="0.55"/>
+        </radialGradient>
+        <mask id="scopeMask">
+          <rect x="-5000" y="-5000" width="10000" height="10000" fill="#fff"/>
+          <circle r="420" fill="#000"/>
+        </mask>
+      </defs>
+      <rect x="-5000" y="-5000" width="10000" height="10000" fill="#050505" mask="url(#scopeMask)"/>
+      <circle r="420" fill="url(#lensTint)"/>
+      <circle r="420" fill="none" stroke="#111" stroke-width="14"/>
+      <g stroke="#0b0b0b" stroke-width="2.4">
+        <line x1="-420" y1="0" x2="-14" y2="0"/><line x1="14" y1="0" x2="420" y2="0"/>
+        <line x1="0" y1="-420" x2="0" y2="-14"/><line x1="0" y1="14" x2="0" y2="420"/>
+      </g>
+      <g stroke="#0b0b0b" stroke-width="7">
+        <line x1="-420" y1="0" x2="-170" y2="0"/><line x1="170" y1="0" x2="420" y2="0"/>
+        <line x1="0" y1="170" x2="0" y2="420"/>
+      </g>
+      <g fill="#0b0b0b" id="mildots">
+        <circle cx="-40" r="3.5"/><circle cx="-80" r="3.5"/><circle cx="-120" r="3.5"/>
+        <circle cx="40" r="3.5"/><circle cx="80" r="3.5"/><circle cx="120" r="3.5"/>
+        <circle cy="40" r="3.5"/><circle cy="80" r="3.5"/><circle cy="120" r="3.5"/>
+        <circle cy="-40" r="3.5"/><circle cy="-80" r="3.5"/><circle cy="-120" r="3.5"/>
+      </g>
+      <circle r="2.2" fill="#ff2a2a"/>
+    </svg>
+    <div id="rangeText" class="range-text"></div>
+  </div>
+  <div id="dmgVignette" class="dmg-vignette"></div>
+  <div id="dmgDirs" class="dmg-dirs"></div>
+  <div id="protect" class="protect hidden">Bảo vệ khi hồi sinh</div>
+
+  <div class="hp-wrap">
+    <div class="hp-icon">✚</div>
+    <div class="hp-bar"><i id="hpFill"></i><i id="hpGhost" class="ghost"></i></div>
+    <div id="hpText" class="hp-text">100</div>
+  </div>
+
+  <div class="weapons">
+    <div id="slot0" class="wslot"><kbd>1</kbd><span class="wicon fist"></span><span class="wname">Nắm đấm</span></div>
+    <div id="slot1" class="wslot"><kbd>2</kbd><span class="wicon awm"></span><span class="wname">AWM</span><span id="ammo" class="ammo">5<small>/∞</small></span></div>
+    <div id="reloadBar" class="reload-bar hidden"><i></i></div>
+  </div>
+
+  <canvas id="minimap" width="200" height="200"></canvas>
+  <div id="killfeed" class="killfeed"></div>
+  <div id="centerMsg" class="center-msg"></div>
+  <div id="stats" class="stats"></div>
+
+  <div id="scoreboard" class="scoreboard hidden">
+    <h2>BẢNG ĐIỂM</h2>
+    <table><thead><tr><th>#</th><th>Người chơi</th><th>Hạ</th><th>Chết</th><th>Trạng thái</th></tr></thead><tbody id="sbBody"></tbody></table>
+  </div>
+</div>
+
+<div id="pause" class="screen hidden">
+  <div class="pause-box">
+    <h2>TẠM DỪNG</h2>
+    <p>Bạn vẫn đang ở trong trận, coi chừng bị bắn!</p>
+    <button id="resumeBtn" class="play-btn small"><span class="play-label">TIẾP TỤC</span></button>
+    <button id="leaveBtn" class="ghost-btn">Về sảnh</button>
+  </div>
+</div>
+
+<div id="death" class="screen hidden">
+  <div class="death-box">
+    <div class="death-title">BẠN ĐÃ BỊ HẠ</div>
+    <div id="deathBy" class="death-by"></div>
+    <div id="deathInfo" class="death-info"></div>
+    <div class="death-timer"><i id="deathFill"></i></div>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

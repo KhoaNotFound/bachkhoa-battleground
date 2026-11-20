@@ -1,0 +1,12 @@
+{
+  "name": "bachkhoa-battleground-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "mqtt": "^5.10.1",
+    "ws": "^8.18.0"
+  }
+}
