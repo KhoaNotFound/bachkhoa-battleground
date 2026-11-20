@@ -44,6 +44,7 @@ renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = !settings.low;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.autoClear = false;
+renderer.info.autoReset = false;
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xcfe0ee, 260, 950);
@@ -837,6 +838,7 @@ function frame() {
   debris.update(dt);
   audio.updateListener(camera);
 
+  renderer.info.reset();
   renderer.clear();
   renderer.render(scene, camera);
   if (state === 'playing') {
