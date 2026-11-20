@@ -98,11 +98,19 @@ export class Audio {
     // tail into reverb
     this.noise(o.rev, t + 0.02, 0.9, { type: 'lowpass', f0: 1400, f1: 120, gain: 0.9 });
   }
-  bolt(delay = 0.35) {
+  bolt(delay = 0.35, vol = 1.0, pitch = 1.0, partial = false) {
     if (!this.ctx) return;
     const d = this.master, t = this.ctx.currentTime + delay;
-    const click = (tt, f) => { this.noise(d, tt, 0.05, { type: 'bandpass', f0: f, q: 6, gain: 0.5 }); this.tone(d, tt, 0.04, { type: 'square', f0: f * 1.5, f1: f, gain: 0.05 }); };
-    click(t, 1800); click(t + 0.18, 2400); click(t + 0.42, 2100); click(t + 0.6, 1600);
+    const click = (tt, f) => {
+      this.noise(d, tt, 0.05, { type: 'bandpass', f0: f, q: 6, gain: 0.5 * vol });
+      this.tone(d, tt, 0.04, { type: 'square', f0: f * 1.5, f1: f, gain: 0.05 * vol });
+    };
+    if (partial) {
+      click(t, 1800 * pitch);
+      click(t + 0.08, 2300 * pitch);
+      return;
+    }
+    click(t, 1800 * pitch); click(t + 0.18, 2400 * pitch); click(t + 0.42, 2100 * pitch); click(t + 0.6, 1600 * pitch);
   }
   reload() {
     if (!this.ctx) return;
@@ -121,6 +129,36 @@ export class Audio {
     const o = this.out(pos, 4, 1.2), t = this.ctx.currentTime;
     this.tone(o.node, t, 0.16, { f0: 160, f1: 50, gain: 1.1 });
     this.noise(o.node, t, 0.1, { type: 'lowpass', f0: 1800, f1: 300, gain: 0.9 });
+  }
+  knifeClack(pitch = 1.0, vol = 0.7) {
+    if (!this.ctx) return;
+    const d = this.master, t = this.ctx.currentTime;
+    const p = pitch * (0.95 + Math.random() * 0.1);
+    // Crisp metallic tang-pin click + bright titanium ring overtone
+    this.noise(d, t, 0.028, { type: 'bandpass', f0: 3600 * p, f1: 2200 * p, q: 7, gain: 0.55 * vol, attack: 0.001 });
+    this.tone(d, t, 0.045, { type: 'triangle', f0: 4200 * p, f1: 3400 * p, gain: 0.14 * vol, attack: 0.001 });
+    this.tone(d, t, 0.075, { type: 'sine', f0: 6100 * p, f1: 5800 * p, gain: 0.07 * vol, attack: 0.001 });
+  }
+  knifeDraw() {
+    if (!this.ctx) return;
+    const d = this.master, t = this.ctx.currentTime;
+    // Quick whip air whoosh + metallic shing shimmer
+    this.noise(d, t + 0.08, 0.16, { type: 'bandpass', f0: 900, f1: 2800, q: 2.2, gain: 0.28, attack: 0.04 });
+    this.tone(d, t + 0.22, 0.22, { type: 'sine', f0: 5200, f1: 4800, gain: 0.055, attack: 0.01 });
+  }
+  knifeSlash(pos, heavy = false) {
+    if (!this.ctx) return;
+    const o = this.out(pos, 3.5, 1.3), t = this.ctx.currentTime;
+    const dur = heavy ? 0.22 : 0.14;
+    this.noise(o.node, t, dur, { type: 'bandpass', f0: heavy ? 1200 : 1800, f1: heavy ? 4200 : 5200, q: 2.4, gain: heavy ? 0.52 : 0.36, attack: 0.02 });
+    this.tone(o.node, t, dur * 0.85, { type: 'sine', f0: heavy ? 2800 : 3800, f1: heavy ? 1400 : 2100, gain: 0.07, attack: 0.015 });
+  }
+  knifeHit(pos, heavy = false) {
+    if (!this.ctx) return;
+    const o = this.out(pos, 4.5, 1.2), t = this.ctx.currentTime;
+    this.noise(o.node, t, 0.11, { type: 'bandpass', f0: 2600, f1: 600, q: 1.4, gain: heavy ? 1.15 : 0.85, attack: 0.002 });
+    this.tone(o.node, t, 0.13, { f0: heavy ? 180 : 220, f1: 55, gain: heavy ? 1.0 : 0.72 });
+    this.tone(o.node, t, 0.09, { type: 'triangle', f0: 4600, f1: 3100, gain: 0.14 });
   }
   hitmarker(head) {
     if (!this.ctx) return;

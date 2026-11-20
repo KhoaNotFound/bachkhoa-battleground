@@ -18,7 +18,7 @@ const BROKER = process.env.BROKER || 'wss://broker.emqx.io:8084/mqtt';
 const TOPIC_ROOT = 'bkbg/v2';
 const BRIDGE = process.env.BRIDGE !== '0';
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary' };
 const rooms = new Map(); // room -> Set<ws>
 
 function idGen() {

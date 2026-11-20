@@ -8,7 +8,7 @@ export class HUD {
   constructor(minimapData) {
     this.el = {
       hud: $('hud'), hpFill: $('hpFill'), hpGhost: $('hpGhost'), hpText: $('hpText'), ammo: $('ammo'),
-      slot0: $('slot0'), slot1: $('slot1'), crosshair: $('crosshair'), hitmarker: $('hitmarker'),
+      slot0: $('slot0'), slot1: $('slot1'), slot2: $('slot2'), crosshair: $('crosshair'), hitmarker: $('hitmarker'),
       scope: $('scope'), rangeText: $('rangeText'), vignette: $('dmgVignette'), dirs: $('dmgDirs'),
       killfeed: $('killfeed'), center: $('centerMsg'), stats: $('stats'), sb: $('scoreboard'), sbBody: $('sbBody'),
       reloadBar: $('reloadBar'), protect: $('protect'), minimap: $('minimap'),
@@ -91,8 +91,9 @@ export class HUD {
   setWeapon(w, ammo, reserveText = '∞') {
     this.el.slot0.classList.toggle('on', w === 0);
     this.el.slot1.classList.toggle('on', w === 1);
+    if (this.el.slot2) this.el.slot2.classList.toggle('on', w === 2);
     this.el.ammo.innerHTML = `${ammo}<small>/${reserveText}</small>`;
-    this.el.crosshair.classList.toggle('fist', w === 0);
+    this.el.crosshair.classList.toggle('fist', w === 0 || w === 2);
   }
   setSpread(px) { this.el.crosshair.style.setProperty('--gap', `${Math.round(6 + px)}px`); }
   setScope(on, range) {
@@ -131,7 +132,8 @@ export class HUD {
   killfeed(killer, victim, weapon, hs, mine, dist) {
     const div = document.createElement('div');
     div.className = 'kf' + (mine ? ' me' : '');
-    div.innerHTML = `<span style="color:${killer.color}">${escapeHtml(killer.name)}</span><span class="wi ${weapon === 'fist' ? 'fist' : 'awm'}"></span>${hs ? '<span class="hs" title="Headshot"></span>' : ''}<span style="color:${victim.color}">${escapeHtml(victim.name)}</span>${dist ? `<small style="opacity:.6">${Math.round(dist)}m</small>` : ''}`;
+    const wCls = weapon === 'fist' ? 'fist' : weapon === 'knife' ? 'knife' : 'awm';
+    div.innerHTML = `<span style="color:${killer.color}">${escapeHtml(killer.name)}</span><span class="wi ${wCls}"></span>${hs ? '<span class="hs" title="Headshot"></span>' : ''}<span style="color:${victim.color}">${escapeHtml(victim.name)}</span>${dist ? `<small style="opacity:.6">${Math.round(dist)}m</small>` : ''}`;
     this.el.killfeed.prepend(div);
     while (this.el.killfeed.children.length > 6) this.el.killfeed.lastChild.remove();
     setTimeout(() => div.remove(), 7000);
