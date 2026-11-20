@@ -2,10 +2,13 @@ import * as THREE from 'three';
 import { clamp } from './util.js';
 
 // Admin "inspect map" mode: a free-flying camera for screenshots, not visible to other players.
-// Unlocked when the player name is ADMIN_NAME *and* this browser holds the admin key
-// (open the site once with ?admin=<key>; only the key's SHA-256 is stored here).
-const ADMIN_NAME = 'khoanotfound';
-const KEY_HASH = 'ed977d7fb222f9ad81b82c9bda20cfe1386c4b89d0e5a1deb1fa2e6a68b62277';
+// Unlocked when this browser holds one of the admin keys (open the site once with ?admin=<key>).
+// One key per person, only SHA-256 hashes live here: add / revoke with tools/admin_key.py.
+const KEY_HASHES = {
+  'ed977d7fb222f9ad81b82c9bda20cfe1386c4b89d0e5a1deb1fa2e6a68b62277': 'khoa',
+  '02880a0eb4117ac453569790cb6cb40600e6d9e2984b6e3592ed69528884e628': 'dong-nghiep-1',
+  // @admin-keys (tools/admin_key.py inserts new entries above this line)
+};
 const LS_KEY = 'bkbg_admin_key';
 
 async function sha256(s) {
@@ -23,7 +26,7 @@ export async function loadAdminKey() {
   }
   let k = fromUrl;
   if (!k) try { k = localStorage.getItem(LS_KEY); } catch {}
-  try { return !!k && (await sha256(k)) === KEY_HASH; } catch { return false; }
+  try { return (!!k && KEY_HASHES[await sha256(k)]) || null; } catch { return null; }  // -> label or null
 }
 
 export class Inspector {

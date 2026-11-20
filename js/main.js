@@ -233,7 +233,7 @@ function allPlayers() {
 }
 function myName() { return cleanName(settings.name); }
 let inspector = null, adminKey = false, chat = null;
-const isAdmin = () => adminKey && (settings.name || '').trim().toLowerCase() === 'khoanotfound';
+const isAdmin = () => !!adminKey;
 function updateAdminBtn() { const b = $('inspectBtn'); if (b) b.classList.toggle('hidden', !isAdmin()); }
 
 // ---------------- spawn / death ----------------
