@@ -1,8 +1,8 @@
-# Báo Cáo Kiến Trúc Dự Án, AWP Dragon Lore & Hệ Thống Animation Múa Dao Butterfly
+# Báo Cáo Kiến Trúc Dự Án, AWP Dragon Lore, Dao Butterfly & Hiệu Ứng Kill Effect Valorant
 
 **Dự án:** Bách Khoa Battleground  
-**Công nghệ cốt lõi:** HTML5, CSS3, Vanilla ES Modules, Three.js (`v0.164.1`), Blender 5.3 NLA Rigging (`THREE.AnimationMixer`), Web Audio API, WebSocket (`ws`) & MQTT (`mqtt`)  
-**Cập nhật lần cuối:** 20/11/2026
+**Công nghệ cốt lõi:** HTML5, CSS3, Vanilla ES Modules, Three.js (`v0.164.1`), Blender 5.3 NLA Rigging (`THREE.AnimationMixer`), Canvas 2D Real-time Chroma Key, Web Audio API, WebSocket (`ws`) & MQTT (`mqtt`)  
+**Cập nhật lần cuối:** 21/11/2026
 
 ---
 
@@ -10,34 +10,43 @@
 
 ```text
 bachkhoa-battleground/
-├── index.html                  # Giao diện gốc: importmap Three.js, màn hình Loading, Sảnh (Lobby), HUD, Scope, Bảng điểm
-├── style.css                   # Toàn bộ giao diện UI/UX (glassmorphism), tâm ngắm, thanh máu, slot vũ khí & icon SVG
+├── index.html                  # Giao diện gốc: importmap Three.js, màn hình Loading, Sảnh (Lobby), HUD, Kill Banner, Scope, Bảng điểm
+├── style.css                   # Toàn bộ giao diện UI/UX (glassmorphism), tâm ngắm, thanh máu, slot vũ khí, kill banner & icon SVG
 ├── README.md                   # Tài liệu giới thiệu game, phím điều khiển và kiến trúc mạng
 ├── server.json                 # Lưu URL Cloudflare Tunnel công khai của relay server (client tự đọc khi chơi online)
 ├── start-server.sh             # Script bash tự khởi chạy Node relay server + mở Cloudflare quick tunnel & cập nhật server.json
 ├── .gitignore                  # Bỏ qua file tạm/log/node_modules khi commit Git
 │
-├── assets/                     # Chứa tài nguyên 3D nhị phân glTF 2.0 (không nén Draco) cho trình duyệt
+├── assets/                     # Chứa tài nguyên 3D nhị phân glTF 2.0, âm thanh và video hiệu ứng hạ gục
 │   ├── awp-dragon-lore.glb     # CS:GO AWP Dragon Lore (~4.31 MB): Armature 8 xương, tay hộp chữ nhật, 2 texture nhúng & 5 clip NLA (draw, idle, fire, reload, inspect)
 │   ├── butterfly-viewmodel.glb # Rig ViewModel dao Butterfly (~1.37 MB): Armature 23 xương, tay khối hộp chữ nhật & 6 clip NLA (draw, idle, slash_1, slash_2, heavy, inspect)
-│   └── butterfly-knife.glb     # Mô hình 3D dao Valorant Champions Butterfly gốc (~594 KB) có 2 chốt bản lề SafePinPivot & BitePinPivot
+│   ├── butterfly-knife.glb     # Mô hình 3D dao Valorant Champions Butterfly gốc (~594 KB) có 2 chốt bản lề SafePinPivot & BitePinPivot
+│   └── killfx/                 # 6 đoạn video hiệu ứng hạ gục liên tiếp Valorant (1080p 60fps + âm thanh stereo 48kHz)
+│       ├── kill_1.mp4          # Mạng 1 (1.65s · 99 frames, cắt từ 0.25s – 1.88s)
+│       ├── kill_2.mp4          # Mạng 2 liên tiếp (1.67s · 100 frames, cắt từ 1.90s – 3.55s)
+│       ├── kill_3.mp4          # Mạng 3 liên tiếp (1.67s · 100 frames, cắt từ 3.57s – 5.22s)
+│       ├── kill_4.mp4          # Mạng 4 liên tiếp (1.53s · 92 frames, cắt từ 5.23s – 6.75s)
+│       ├── kill_5.mp4          # Mạng 5 liên tiếp / ACE (6.90s · 414 frames, cắt từ 6.77s – 13.65s)
+│       └── kill_6.mp4          # Mạng 6+ liên tiếp (6.90s · 414 frames, cắt từ 14.60s – 21.48s)
 │
 ├── js/                         # Toàn bộ mã nguồn client (ES Modules, không cần bước build)
-│   ├── main.js                 # Điểm khởi chạy chính: game loop, input, điều khiển nhân vật, bắn/cận chiến, đồng bộ mạng
+│   ├── main.js                 # Điểm khởi chạy chính: game loop, input, điều khiển nhân vật, hệ thống vũ khí đa dạng, /dummy, chuỗi killStreak & đồng bộ mạng
+│   ├── weapons.js              # Danh mục 18 khẩu súng (Sidearms, SMGs, Shotguns, Rifles, Snipers, Machine Guns) + 2 cận chiến (Dao Butterfly / Nắm đấm) & icon SVG
+│   ├── shop.js                 # Bảng mua vũ khí kiểu Valorant (nhấn B): 5 cột vũ khí + bảng thông số chi tiết bên phải + tùy chọn dùng Dao hoặc Nắm đấm
 │   ├── butterfly.js            # Điều khiển dao Butterfly: nạp butterfly-viewmodel.glb qua THREE.AnimationMixer, vật lý 6-DOF Tầng 1 & clack audio đồng bộ frame
-│   ├── viewmodel.js            # Scene góc nhìn thứ nhất (FOV 62°), PMREM studio lighting, quản lý 3 vũ khí & AnimationMixer cho AWP Dragon Lore
+│   ├── viewmodel.js            # Scene góc nhìn thứ nhất (FOV 62°), PMREM studio lighting, AWP Dragon Lore GLB, Dao Butterfly GLB & procedural ViewModel cho 17 loại súng mới
 │   ├── physics.js              # Hệ va chạm AABB theo lưới 2D (CollisionWorld + 2D DDA raycast) & bộ di chuyển nhân vật (Mover)
 │   ├── map.js                  # Dựng khuôn viên 3D ĐH Bách Khoa TP.HCM (268 Lý Thường Kiệt) bằng procedural geometry merging
 │   ├── textures.js             # Sinh toàn bộ texture 2D bằng Canvas (mặt tiền, mái, sân bóng, sân bóng rổ, khuôn mặt, nametag, tia lửa)
 │   ├── avatar.js               # Mô hình nhân vật góc nhìn thứ 3 (dùng AWP Dragon Lore clone + Butterfly 3rd-person), hitbox 3 vùng & hiệu ứng vỡ khối Debris
-│   ├── hud.js                  # Quản lý HUD: minimap xoay theo hướng nhìn, thanh máu, đạn, hitmarker, killfeed, bảng điểm
+│   ├── hud.js                  # Quản lý HUD: minimap xoay theo hướng nhìn, thanh máu, đạn, hitmarker, killfeed, kill banner (Chroma Key) & bảng điểm
 │   ├── vfx.js                  # Hệ thống hạt (3000 hạt additive/normal), đường đạn tracer, chớp nòng, vết đạn decal, máu & vòng xung
-│   ├── audio.js                # Bộ tổng hợp âm thanh 100% bằng Web Audio API (không dùng file mp3/wav), hỗ trợ âm thanh 3D HRTF
+│   ├── audio.js                # Bộ tổng hợp âm thanh Web Audio API + hỗ trợ âm thanh 3D HRTF
 │   ├── net.js                  # Lớp mạng lai: ưu tiên WebSocket Relay Server và tự động fallback sang Public MQTT Broker
 │   └── util.js                 # Hàm toán học & tiện ích (clamp, lerp, damp, góc xoay, PRNG mulberry32, escapeHtml)
 │
 ├── server/                     # Backend nhẹ để relay dữ liệu multiplayer độ trễ thấp
-│   ├── server.js               # HTTP static server (hỗ trợ .glb) + WebSocket room relay + cầu nối 2 chiều sang MQTT broker
+│   ├── server.js               # HTTP static server (hỗ trợ .glb, .mp4, .webm, .mp3) + WebSocket room relay + cầu nối 2 chiều sang MQTT broker
 │   ├── package.json            # Khai báo dependencies (ws, mqtt) và lệnh khởi chạy server
 │   └── package-lock.json       # Khóa phiên bản chính xác các gói npm của server
 │
@@ -150,11 +159,57 @@ Mô hình gốc từ `DRAGONLORE.fbx` được chuẩn hóa về hệ tọa đ�
 
 ---
 
-### 3.3. Hướng Dẫn Debug, Slow-Motion & Kiểm Thử (`window.__game`)
+### 3.3. Hệ Thống Hiệu Ứng Hạ Gục Liên Tiếp Valorant (`assets/killfx/`, `js/hud.js`, `js/main.js`)
+
+#### A. Phân Tách 6 Đoạn Video Kill Effect Chuẩn Từng Khung Hình (60 FPS)
+Từ video hiệu ứng gốc (`1920×1080`, `60 FPS`, âm thanh stereo `48 kHz`), hệ thống được cắt chính xác theo biên độ âm thanh và khung hình bắt đầu hiệu ứng trong Blender 5.3 VSE (hệ màu `Standard`) thành 6 clip độc lập đặt tại `assets/killfx/`:
+
+| Clip | Cấp Chuỗi (`killStreak`) | Đoạn Gốc (`60 FPS`) | Thời Lượng | Đặc Điểm Hiệu Ứng & Âm Thanh |
+| :--- | :-: | :---: | :---: | :--- |
+| **`kill_1.mp4`** | **Mạng 1** | `0.25s – 1.88s` (f`16–114`) | `1.65 s` (`99` frames) | Huy hiệu đầu lâu 1 vạch + âm thanh hạ gục nốt thứ 1 |
+| **`kill_2.mp4`** | **Mạng 2** | `1.90s – 3.55s` (f`115–214`) | `1.67 s` (`100` frames) | Huy hiệu đầu lâu 2 vạch + âm thanh hạ gục nốt thứ 2 |
+| **`kill_3.mp4`** | **Mạng 3** | `3.57s – 5.22s` (f`215–314`) | `1.67 s` (`100` frames) | Huy hiệu đầu lâu 3 vạch + âm thanh hạ gục nốt thứ 3 |
+| **`kill_4.mp4`** | **Mạng 4** | `5.23s – 6.75s` (f`315–406`) | `1.53 s` (`92` frames) | Huy hiệu đầu lâu 4 vạch + âm thanh hạ gục nốt thứ 4 |
+| **`kill_5.mp4`** | **Mạng 5 (ACE)** | `6.77s – 13.65s` (f`407–820`) | `6.90 s` (`414` frames) | Huy hiệu 5 vạch + nhạc hiệu ACE ngân dài & vòng tâm thu dần |
+| **`kill_6.mp4`** | **Mạng 6+ liên tiếp** | `14.60s – 21.48s` (f`877–1290`) | `6.90 s` (`414` frames) | Huy hiệu đầu lâu tia văng cực đại + nhạc hiệu hạ gục thứ 6+ |
+
+#### B. Cơ Chế Tích Lũy Chuỗi Hạ Gục (`me.killStreak`) & Xóa Phông Xanh Thời Gian Thực (Chroma Key)
+- **Logic chuỗi hạ gục không chết giữa chừng (`js/main.js`)**:
+  - Mỗi khi người chơi hạ gục 1 kẻ địch trong cùng một mạng sống (`m.k === net.id`), `me.killStreak` tăng thêm `1` và kích hoạt `hud.showKillEffect(Math.min(6, me.killStreak), settings.vol)`.
+  - Nếu hạ thêm kẻ địch tiếp theo khi hiệu ứng trước chưa kết thúc, clip cũ tự động dừng ngay và chuyển tức thì sang clip của mạng kế tiếp (`kill_1` → `kill_2` → `kill_3` → `kill_4` → `kill_5` → `kill_6`).
+  - Khi người chơi bị hạ (`die()`), hồi sinh mới (`spawn()`) hoặc thoát ra sảnh (`leaveToLobby()`), `me.killStreak` tự động reset về `0` và ẩn banner.
+- **Thuật toán Chroma Key & Despill Thời Gian Thực (`HUD.drawKillEffectFrame` trong `js/hud.js`)**:
+  - Chỉ cắt vùng huy hiệu trung tâm phía dưới (`600×320` tại tọa độ `x = 660, y = 710` của khung `1920×1080`) vẽ lên `<canvas id="killBanner" width="520" height="280">`.
+  - Do nền phông xanh có `RGB ≈ (28, 119, 0)` và huy hiệu đầu lâu màu trắng sáng `RGB ≈ (195, 196, 195)`, kênh Alpha được khôi phục trực tiếp từ kênh Đỏ & Xanh dương: $\alpha = \max((B - 10)\times 1.45,\ (R - 38)\times 1.62)$ kết hợp khử tràn viền xanh (despill) sang trắng sáng và làm mờ mượt `0.25s` cuối cho các clip `1..4`.
+
+---
+
+### 3.4. Bảng Mua Vũ Khí Kiểu Valorant (Phím `B`) & Lệnh `/dummy` (`js/weapons.js`, `js/shop.js`, `js/main.js`)
+
+- **Bảng mua vũ khí (`B`)**:
+  - Bố cục 5 cột vũ khí bên trái + **Bảng thông số chi tiết bên phải** (hiển thị ngay khi rê chuột hoặc chọn: `Fire Rate`, `Run Speed`, `Equip Speed`, `1st Shot Spread`, `Reload Speed`, `Magazine`, bảng `Damage Head/Body/Legs` và `Alt Fire`):
+    1. **Sidearms (Súng lục · Ô `2`)**: Classic, Shorty, Frenzy, Ghost (giảm thanh), Sheriff.
+    2. **SMGs & Shotguns (Ô `1`)**: Stinger, Spectre (giảm thanh), Bucky (12 bi), Judge (tự động 10 bi).
+    3. **Rifles (Súng trường · Ô `1`)**: Bulldog, Guardian, Phantom (giảm thanh), Vandal.
+    4. **Sniper Rifles & Machine Guns (Ô `1`)**: Marshal, Outlaw, Operator / AWP Dragon Lore (`awp-dragon-lore.glb`), Ares (50 viên), Odin (100 viên).
+    5. **Melee / Cận chiến (Ô `3` — loại trừ nhau)**: Chọn **Dao Butterfly** sẽ tự động **ẩn Nắm đấm** khỏi HUD và vòng đổi vũ khí; chọn **Nắm đấm** sẽ tự động **ẩn Dao Butterfly**.
+- **Lệnh tập bắn `/dummy`**:
+  - Gõ `/dummy` (hoặc `/dummy 1..10`) trong khung chat (`/`) để spawn mục tiêu tập bắn ngay phía trước (hiển thị HP trên đầu và chấm cam trên minimap); gõ `/dummy clear` để xoá toàn bộ dummy.
+  - Khi bắn hoặc chém hạ dummy, game kích hoạt đầy đủ hiệu ứng vỡ khối `Debris`, killfeed, hồi `+25 HP` và **chuỗi Kill Effect Valorant (`1 → 6+`)**.
+
+---
+
+### 3.5. Hướng Dẫn Debug, Slow-Motion & Kiểm Thử (`window.__game`)
 
 ```js
-// Vào trận & kiểm tra AWP Dragon Lore (slot 2)
+// Vào trận & kiểm tra Bảng mua vũ khí (B), /dummy và Kill Streak 1 -> 6
 window.__game.spawn();
+window.__game.toggleBuyMenu(true);                        // Mở bảng mua vũ khí (hoặc ấn phím B)
+window.__game.spawnDummy(6);                              // Spawn 6 dummy tập bắn phía trước (hoặc gõ /dummy 6)
+window.__game.triggerKillStreak(5);                       // Thử hiệu ứng Mạng 5 / ACE (kill_5.mp4)
+// Hoặc mở khung chat trong trận (phím /) và gõ: /dummy · /dummy 6 · /dummy clear · /killfx [1..6|reset]
+
+// Kiểm tra AWP Dragon Lore (slot 2)
 window.__game.vm.setInspect(true);                        // Bắt đầu anim inspect 3.5s trên AWP Dragon Lore
 window.__game.vm.fire();                                  // Chạy hoạt ảnh giật + kéo khóa nòng (fire)
 window.__game.vm.reload(2.8);                             // Chạy hoạt ảnh tháo/lắp băng đạn & gạt khóa nòng (reload)

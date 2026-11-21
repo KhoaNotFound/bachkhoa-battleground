@@ -113,6 +113,61 @@ export class Audio {
     // tail into reverb
     this.noise(o.rev, t + 0.02, 0.9, { type: 'lowpass', f0: 1400, f1: 120, gain: 0.9 });
   }
+  gunshot(w, pos) {
+    if (!this.ctx) return;
+    if (!w || w.id === 'operator') { this.awm(pos); return; }
+    const o = this.out(pos, w.silenced ? 10 : 16, 0.85);
+    const t = this.ctx.currentTime + o.delay;
+    if (w.silenced) {
+      // Tactical suppressed shot (Ghost, Spectre, Phantom)
+      const isRifle = w.cat === 'RIFLES';
+      this.noise(o.node, t, isRifle ? 0.09 : 0.07, { type: 'bandpass', f0: isRifle ? 2200 : 2800, f1: 650, q: 1.8, gain: isRifle ? 0.72 : 0.55, attack: 0.001 });
+      this.tone(o.node, t, 0.08, { type: 'triangle', f0: isRifle ? 240 : 300, f1: 75, gain: isRifle ? 0.42 : 0.3 });
+      return;
+    }
+    if (w.cat === 'SHOTGUNS' || w.id === 'shorty') {
+      // Heavy wide shotgun blast
+      this.noise(o.node, t, 0.28, { type: 'lowpass', f0: 2800, f1: 180, gain: 1.45, q: 0.6, attack: 0.001 });
+      this.noise(o.node, t, 0.12, { type: 'highpass', f0: 1800, f1: 700, gain: 0.95, attack: 0.001 });
+      this.tone(o.node, t, 0.24, { f0: 130, f1: 36, gain: 1.35 });
+      this.noise(o.rev, t + 0.02, 0.55, { type: 'lowpass', f0: 1100, f1: 140, gain: 0.65 });
+      return;
+    }
+    if (w.cat === 'SNIPER RIFLES') {
+      // Marshal / Outlaw sharp sniper crack
+      this.noise(o.node, t, 0.16, { type: 'highpass', f0: 2600, f1: 900, gain: 1.35, attack: 0.001 });
+      this.noise(o.node, t, 0.42, { type: 'lowpass', f0: 3000, f1: 170, gain: 1.4, q: 0.8 });
+      this.tone(o.node, t, 0.3, { f0: 125, f1: 42, gain: 1.25 });
+      this.noise(o.rev, t + 0.02, 0.75, { type: 'lowpass', f0: 1400, f1: 140, gain: 0.8 });
+      return;
+    }
+    if (w.cat === 'MACHINE GUNS') {
+      // Ares / Odin heavy LMG thump
+      this.noise(o.node, t, 0.14, { type: 'bandpass', f0: 1600, f1: 320, q: 0.9, gain: 1.05, attack: 0.001 });
+      this.tone(o.node, t, 0.13, { type: 'sawtooth', f0: 145, f1: 48, gain: 0.65 });
+      this.noise(o.rev, t + 0.01, 0.28, { type: 'lowpass', f0: 1000, f1: 180, gain: 0.4 });
+      return;
+    }
+    if (w.cat === 'RIFLES') {
+      // Vandal / Bulldog / Guardian punchy rifle crack
+      const heavy = w.id === 'guardian' || w.id === 'vandal';
+      this.noise(o.node, t, heavy ? 0.15 : 0.12, { type: 'bandpass', f0: heavy ? 2100 : 2500, f1: 380, q: 0.85, gain: heavy ? 1.15 : 0.95, attack: 0.001 });
+      this.tone(o.node, t, 0.14, { f0: heavy ? 175 : 210, f1: 52, gain: heavy ? 0.95 : 0.72 });
+      this.noise(o.rev, t + 0.015, 0.36, { type: 'lowpass', f0: 1200, f1: 160, gain: 0.48 });
+      return;
+    }
+    if (w.cat === 'SMGS') {
+      // Stinger rapid compact pop
+      this.noise(o.node, t, 0.08, { type: 'bandpass', f0: 2900, f1: 600, q: 1.2, gain: 0.78, attack: 0.001 });
+      this.tone(o.node, t, 0.075, { f0: 260, f1: 85, gain: 0.48 });
+      return;
+    }
+    // Sidearms (Classic, Frenzy, Sheriff)
+    const isSheriff = w.id === 'sheriff';
+    this.noise(o.node, t, isSheriff ? 0.22 : 0.1, { type: 'bandpass', f0: isSheriff ? 1850 : 2600, f1: 350, q: 0.9, gain: isSheriff ? 1.3 : 0.82, attack: 0.001 });
+    this.tone(o.node, t, isSheriff ? 0.2 : 0.09, { f0: isSheriff ? 150 : 240, f1: isSheriff ? 44 : 80, gain: isSheriff ? 1.15 : 0.55 });
+    if (isSheriff) this.noise(o.rev, t + 0.02, 0.45, { type: 'lowpass', f0: 1200, f1: 160, gain: 0.55 });
+  }
   // a bullet passing close by: supersonic crack + falling whoosh, placed where it passed
   whiz(pos, dist) {
     if (!this.ctx) return;
