@@ -126,6 +126,22 @@ export class ViewModel {
     this.butterfly = new ButterflyController(this.sleeveMat, skin, audio);
     this.root.add(this.butterfly.group);
 
+    // ---- Procedural Custom Gun ViewModel (for bought sidearms/SMGs/rifles/shotguns/LMGs/snipers) ----
+    this.customGun = new THREE.Group();
+    this.customGun.visible = false;
+    this.root.add(this.customGun);
+    this.customGunCache = new Map();
+    this.activeCustomMesh = null;
+    this.gunDef = null;
+    this.useAwpGlb = true;
+    this.customFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: TX.flashStar(), color: 0xffe0a0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+    this.customFlash.scale.setScalar(0.14);
+    this.customFlash.visible = false;
+    this.customGun.add(this.customFlash);
+    this.customFlashLight = new THREE.PointLight(0xffc070, 0, 3);
+    this.customFlashLight.position.set(0, 0.03, -0.35);
+    this.customGun.add(this.customFlashLight);
+
     this.hipPos = new THREE.Vector3(0.115, -0.105, -0.43);
     this.adsPos = new THREE.Vector3(0, -0.038, -0.22);
     this._awmPos = new THREE.Vector3();
@@ -315,8 +331,201 @@ export class ViewModel {
     if (this._awmSleeveMat) this._awmSleeveMat.color.set(c);
   }
 
-  setWeapon(w) {
-    if (w !== this.weapon) {
+  _buildCustomGun(w) {
+    const g = new THREE.Group();
+    const bodyMat = new THREE.MeshStandardMaterial({ color: w.color || 0x2f353d, roughness: 0.45, metalness: 0.45 });
+    const darkMat = new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.55, metalness: 0.5 });
+    const accentMat = new THREE.MeshStandardMaterial({ color: w.accent || 0x2ce5b5, roughness: 0.35, metalness: 0.55 });
+    const addBox = (sx, sy, sz, x, y, z, mat = bodyMat, rx = 0, ry = 0, rz = 0) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      g.add(m);
+      return m;
+    };
+    const addCyl = (r, len, x, y, z, mat = darkMat, rx = Math.PI / 2) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), mat);
+      m.position.set(x, y, z);
+      m.rotation.x = rx;
+      g.add(m);
+      return m;
+    };
+
+    const t = w.modelType || 'rifle';
+    let muzzleZ = -0.45;
+    let magMesh = null;
+
+    if (t === 'pistol' || t === 'ghost' || t === 'frenzy' || t === 'revolver' || t === 'shorty') {
+      // Compact sidearm geometry
+      if (t === 'revolver') {
+        addBox(0.036, 0.052, 0.16, 0, 0.01, -0.02, bodyMat);
+        addCyl(0.026, 0.068, 0, 0.012, -0.03, accentMat);
+        addBox(0.024, 0.036, 0.22, 0, 0.022, -0.18, bodyMat);
+        addBox(0.032, 0.11, 0.048, 0, -0.06, 0.055, darkMat, 0.28);
+        muzzleZ = -0.32;
+      } else if (t === 'shorty') {
+        addBox(0.052, 0.044, 0.15, 0, 0.0, -0.02, accentMat);
+        addCyl(0.014, 0.26, -0.014, 0.014, -0.16, darkMat);
+        addCyl(0.014, 0.26, 0.014, 0.014, -0.16, darkMat);
+        addBox(0.042, 0.068, 0.13, 0, -0.042, 0.09, accentMat, 0.36);
+        muzzleZ = -0.31;
+      } else {
+        addBox(0.036, 0.044, 0.22, 0, 0.015, -0.05, bodyMat);
+        addBox(0.032, 0.014, 0.21, 0, 0.038, -0.05, accentMat);
+        addBox(0.03, 0.11, 0.046, 0, -0.055, 0.035, darkMat, 0.22);
+        if (t === 'frenzy') {
+          magMesh = addBox(0.024, 0.13, 0.036, 0, -0.09, -0.09, accentMat, -0.12);
+          addBox(0.022, 0.02, 0.08, 0, 0.016, -0.19, darkMat);
+          muzzleZ = -0.26;
+        } else if (t === 'ghost') {
+          addCyl(0.015, 0.20, 0, 0.016, -0.25, darkMat);
+          magMesh = addBox(0.022, 0.10, 0.036, 0, -0.06, 0.035, accentMat, 0.22);
+          muzzleZ = -0.37;
+        } else {
+          magMesh = addBox(0.022, 0.095, 0.036, 0, -0.06, 0.035, accentMat, 0.22);
+          muzzleZ = -0.20;
+        }
+      }
+      // Two-hand blocky pistol stance
+      addBox(0.075, 0.075, 0.28, 0.045, -0.11, 0.22, this.sleeveMat, 0.28, -0.18);
+      addBox(0.068, 0.068, 0.085, 0.015, -0.06, 0.05, this.skinMat);
+      addBox(0.075, 0.075, 0.28, -0.065, -0.12, 0.20, this.sleeveMat, 0.26, 0.28);
+      addBox(0.068, 0.068, 0.085, -0.02, -0.065, 0.025, this.skinMat);
+    } else if (t === 'smg' || t === 'smgSilenced') {
+      addBox(0.052, 0.068, 0.34, 0, 0.01, -0.06, bodyMat);
+      addBox(0.044, 0.016, 0.26, 0, 0.05, -0.06, accentMat);
+      addBox(0.036, 0.095, 0.046, 0, -0.06, 0.05, darkMat, 0.22);
+      magMesh = addBox(0.028, 0.17, 0.036, 0, -0.10, -0.08, darkMat, -0.15);
+      addBox(0.04, 0.058, 0.14, 0, 0.0, 0.15, darkMat);
+      if (t === 'smgSilenced') {
+        addCyl(0.02, 0.22, 0, 0.016, -0.33, darkMat);
+        muzzleZ = -0.46;
+      } else {
+        addCyl(0.012, 0.14, 0, 0.016, -0.28, darkMat);
+        muzzleZ = -0.37;
+      }
+      addBox(0.082, 0.082, 0.30, 0.055, -0.10, 0.24, this.sleeveMat, 0.3, -0.12);
+      addBox(0.072, 0.072, 0.085, 0.02, -0.055, 0.06, this.skinMat);
+      addBox(0.082, 0.082, 0.32, -0.085, -0.11, -0.02, this.sleeveMat, 0.22, 0.45);
+      addBox(0.072, 0.072, 0.085, -0.025, -0.055, -0.16, this.skinMat);
+    } else if (t === 'shotgun' || t === 'judge') {
+      addBox(0.058, 0.066, 0.40, 0, 0.01, -0.04, bodyMat);
+      addCyl(0.018, 0.42, 0, 0.026, -0.30, darkMat);
+      addBox(0.054, 0.042, 0.22, 0, -0.012, -0.26, accentMat);
+      addBox(0.046, 0.08, 0.20, 0, -0.018, 0.22, bodyMat, 0.12);
+      if (t === 'judge') {
+        magMesh = addCyl(0.062, 0.078, 0, -0.06, -0.08, accentMat, 0);
+        magMesh.rotation.z = Math.PI / 2;
+      } else {
+        magMesh = addCyl(0.014, 0.36, 0, -0.008, -0.26, darkMat);
+      }
+      muzzleZ = -0.53;
+      addBox(0.084, 0.084, 0.32, 0.06, -0.10, 0.26, this.sleeveMat, 0.32, -0.12);
+      addBox(0.074, 0.074, 0.085, 0.022, -0.055, 0.08, this.skinMat);
+      addBox(0.084, 0.084, 0.34, -0.085, -0.11, -0.06, this.sleeveMat, 0.22, 0.48);
+      addBox(0.074, 0.074, 0.085, -0.02, -0.052, -0.24, this.skinMat);
+    } else if (t === 'sniper' || t === 'outlaw') {
+      addBox(0.054, 0.068, 0.44, 0, 0.006, -0.04, bodyMat);
+      addBox(0.048, 0.082, 0.22, 0, -0.018, 0.24, bodyMat, 0.08);
+      if (t === 'outlaw') {
+        addCyl(0.013, 0.50, -0.014, 0.022, -0.38, darkMat);
+        addCyl(0.013, 0.50, 0.014, 0.022, -0.38, darkMat);
+        addBox(0.058, 0.026, 0.24, 0, 0.018, -0.26, accentMat);
+      } else {
+        addCyl(0.014, 0.54, 0, 0.02, -0.40, darkMat);
+      }
+      // Scope
+      addCyl(0.024, 0.26, 0, 0.076, -0.08, darkMat);
+      addCyl(0.028, 0.06, 0, 0.076, -0.20, accentMat);
+      addBox(0.016, 0.026, 0.022, 0, 0.048, -0.02, darkMat);
+      addBox(0.016, 0.026, 0.022, 0, 0.048, -0.14, darkMat);
+      magMesh = addBox(0.036, 0.09, 0.065, 0, -0.06, -0.06, accentMat);
+      muzzleZ = -0.68;
+      addBox(0.086, 0.086, 0.32, 0.06, -0.10, 0.26, this.sleeveMat, 0.34, -0.1);
+      addBox(0.074, 0.074, 0.085, 0.025, -0.055, 0.10, this.skinMat);
+      addBox(0.086, 0.086, 0.34, -0.09, -0.11, -0.08, this.sleeveMat, 0.24, 0.48);
+      addBox(0.074, 0.074, 0.085, -0.02, -0.055, -0.26, this.skinMat);
+    } else if (t === 'lmg' || t === 'odin') {
+      const heavy = t === 'odin';
+      addBox(heavy ? 0.082 : 0.068, heavy ? 0.092 : 0.078, 0.48, 0, 0.008, -0.08, bodyMat);
+      addBox(heavy ? 0.066 : 0.052, 0.022, 0.38, 0, 0.062, -0.10, accentMat);
+      addCyl(heavy ? 0.022 : 0.016, 0.36, 0, 0.02, -0.42, darkMat);
+      if (heavy) {
+        addCyl(0.012, 0.34, 0, -0.006, -0.41, accentMat);
+        magMesh = addBox(0.11, 0.14, 0.14, -0.01, -0.10, -0.12, darkMat);
+      } else {
+        magMesh = addBox(0.082, 0.12, 0.11, 0, -0.09, -0.12, accentMat);
+      }
+      addBox(0.056, 0.09, 0.20, 0, -0.015, 0.22, darkMat);
+      muzzleZ = -0.62;
+      addBox(0.09, 0.09, 0.32, 0.065, -0.11, 0.26, this.sleeveMat, 0.32, -0.12);
+      addBox(0.076, 0.076, 0.088, 0.025, -0.06, 0.09, this.skinMat);
+      addBox(0.09, 0.09, 0.34, -0.10, -0.12, -0.08, this.sleeveMat, 0.22, 0.5);
+      addBox(0.076, 0.076, 0.088, -0.03, -0.065, -0.26, this.skinMat);
+    } else {
+      // Rifles: Vandal, Phantom (silenced), Bulldog (bullpup), Guardian (DMR)
+      const isSil = t === 'rifleSilenced';
+      const isBullpup = t === 'bullpup';
+      const isDmr = t === 'dmr';
+      addBox(0.054, 0.068, 0.42, 0, 0.01, -0.06, bodyMat);
+      addBox(0.044, 0.018, 0.34, 0, 0.052, -0.07, accentMat);
+      addBox(0.044, 0.076, 0.19, 0, -0.012, 0.20, darkMat, 0.08);
+      addBox(0.036, 0.095, 0.046, 0, -0.06, 0.06, darkMat, 0.24);
+      // Optic rail / holographic sight
+      addBox(0.028, 0.034, 0.08, 0, 0.072, -0.03, darkMat);
+      addBox(0.022, 0.008, 0.01, 0, 0.076, -0.065, accentMat);
+      // Barrel
+      if (isSil) {
+        addCyl(0.020, 0.28, 0, 0.016, -0.40, darkMat);
+        muzzleZ = -0.56;
+      } else if (isDmr) {
+        addCyl(0.014, 0.44, 0, 0.018, -0.44, darkMat);
+        muzzleZ = -0.67;
+      } else {
+        addCyl(0.014, 0.28, 0, 0.018, -0.39, darkMat);
+        muzzleZ = -0.55;
+      }
+      // Magazine
+      magMesh = addBox(0.032, isDmr ? 0.11 : 0.16, 0.052, 0, -0.095, isBullpup ? 0.14 : -0.10, accentMat, isBullpup ? 0.1 : -0.22);
+      // Blocky hands
+      addBox(0.084, 0.084, 0.32, 0.058, -0.10, 0.24, this.sleeveMat, 0.32, -0.12);
+      addBox(0.074, 0.074, 0.085, 0.022, -0.055, 0.07, this.skinMat);
+      addBox(0.084, 0.084, 0.34, -0.085, -0.11, -0.05, this.sleeveMat, 0.22, 0.48);
+      addBox(0.074, 0.074, 0.085, -0.02, -0.052, -0.22, this.skinMat);
+    }
+
+    g.userData.muzzleZ = muzzleZ;
+    g.userData.mag = magMesh;
+    g.userData.magBaseY = magMesh ? magMesh.position.y : 0;
+    return g;
+  }
+
+  setGunDef(wDef) {
+    if (!wDef) return;
+    const prevId = this.gunDef ? this.gunDef.id : null;
+    this.gunDef = wDef;
+    this.useAwpGlb = wDef.modelType === 'awp_glb';
+    if (!this.useAwpGlb) {
+      if (this.activeCustomMesh) this.activeCustomMesh.visible = false;
+      let mesh = this.customGunCache.get(wDef.id);
+      if (!mesh) {
+        mesh = this._buildCustomGun(wDef);
+        this.customGunCache.set(wDef.id, mesh);
+        this.customGun.add(mesh);
+      }
+      mesh.visible = true;
+      this.activeCustomMesh = mesh;
+      this.customFlash.position.set(0, 0.02, (mesh.userData.muzzleZ || -0.45) - 0.04);
+    }
+    if (prevId !== wDef.id && this.weapon === 1) {
+      this.switchT = 0;
+      this.awmDrawTriggered = false;
+      this.reloadT = 1;
+    }
+  }
+
+  setWeapon(w, forceDraw = false) {
+    if (w !== this.weapon || forceDraw) {
       this.weapon = w;
       this.switchT = 0;
       this.awmDrawTriggered = false;
@@ -336,7 +545,7 @@ export class ViewModel {
     this.awmInspectHeld = want;
     if (this.weapon === 2) {
       this.butterfly.setInspect(want);
-    } else if (this.weapon === 1 && want) {
+    } else if (this.weapon === 1 && this.useAwpGlb && want) {
       const busy =
         this.awmActiveName === 'fire' ||
         this.awmActiveName === 'reload' ||
@@ -352,16 +561,18 @@ export class ViewModel {
     this.flashT = 0;
     this.boltT = -0.25;
     this.awmInspectHeld = false;
-    this._playAwmClip('fire', 0.04, true);
+    if (this.useAwpGlb) this._playAwmClip('fire', 0.04, true);
   }
   reload(dur) {
     this.reloadT = 0;
-    this.reloadDur = dur;
+    this.reloadDur = Math.max(0.01, dur);
     this.awmInspectHeld = false;
-    if (dur > 0.1) {
-      this._playAwmClip('reload', 0.08, true, dur);
-    } else if (this.awmActiveName === 'reload') {
-      this._playAwmClip('idle', 0.05, true);
+    if (this.useAwpGlb) {
+      if (dur > 0.1) {
+        this._playAwmClip('reload', 0.08, true, dur);
+      } else if (this.awmActiveName === 'reload') {
+        this._playAwmClip('idle', 0.05, true);
+      }
     }
   }
   muzzleWorld(cam, out) { return out; }
@@ -376,7 +587,7 @@ export class ViewModel {
         this.knifeDrawTriggered = true;
         this.butterfly.draw();
       }
-      if (this.shown === 1 && (!this.awmDrawTriggered || prevShown !== 1)) {
+      if (this.shown === 1 && this.useAwpGlb && (!this.awmDrawTriggered || prevShown !== 1)) {
         this.awmDrawTriggered = true;
         this._playAwmClip('draw', 0.06, true);
       }
@@ -391,12 +602,14 @@ export class ViewModel {
     this.swayX = damp(this.swayX, clamp(-s.lookDX * 0.0008, -0.04, 0.04), 8, dt);
     this.swayY = damp(this.swayY, clamp(s.lookDY * 0.0008, -0.04, 0.04), 8, dt);
     this.ads = s.ads;
-    this.recoil = damp(this.recoil, 0, 10, dt);
+    this.recoil = damp(this.recoil, 0, 12, dt);
 
     if (this._awmSleeveMat) this._awmSleeveMat.color.copy(this.sleeveMat.color);
 
+    const hideForScope = this.gunDef && this.gunDef.scope && s.ads > 0.92;
     this.fists.visible = this.shown === 0;
-    this.awm.visible = this.shown === 1 && s.ads < 0.92;
+    this.awm.visible = this.shown === 1 && this.useAwpGlb && !hideForScope;
+    this.customGun.visible = this.shown === 1 && !this.useAwpGlb && !hideForScope;
     this.butterfly.group.visible = this.shown === 2;
 
     if (this.shown === 0) {
@@ -409,7 +622,7 @@ export class ViewModel {
         a.position.set(b.x * (1 - k * 0.8) + bobX + this.swayX, b.y + bobY - lower + k * 0.08 + this.swayY, b.z - k * 0.3);
         a.rotation.x = 0.12 - k * 0.15;
       });
-    } else if (this.shown === 1) {
+    } else if (this.shown === 1 && this.useAwpGlb) {
       const ads = easeOut(s.ads);
       this._awmPos.lerpVectors(this.hipPos, this.adsPos, ads);
       const bm = 1 - ads * 0.85;
@@ -462,6 +675,48 @@ export class ViewModel {
       this.flash.visible = this.flashT < 0.05;
       this.flash.material.rotation = Math.random() * 6;
       this.flashLight.intensity = this.flashT < 0.06 ? 6 : 0;
+    } else if (this.shown === 1 && !this.useAwpGlb) {
+      const ads = easeOut(s.ads);
+      const isPistol = this.gunDef && this.gunDef.slot === 'secondary';
+      const hx = isPistol ? 0.13 : 0.14;
+      const hy = isPistol ? -0.12 : -0.125;
+      const hz = isPistol ? -0.36 : -0.38;
+      const ax = 0, ay = isPistol ? -0.065 : -0.072, az = isPistol ? -0.26 : -0.28;
+      const px = hx + (ax - hx) * ads;
+      const py = hy + (ay - hy) * ads;
+      const pz = hz + (az - hz) * ads;
+      const bm = 1 - ads * 0.8;
+      const rk = this.gunDef ? Math.min(1.8, (this.gunDef.recoilKick || 0.025) * 40) : 1;
+      const recoilZ = this.recoil * 0.055 * rk;
+      const recoilY = this.recoil * 0.014 * rk;
+      const recoilRx = this.recoil * 0.10 * rk;
+      this.customGun.position.set(
+        px + (bobX + this.swayX) * bm,
+        py + (bobY + this.swayY) * bm - lower + recoilY,
+        pz + recoilZ
+      );
+      this.customGun.rotation.set(recoilRx, (1 - ads) * 0.03, (1 - ads) * 0.02);
+
+      this.reloadT = Math.min(1, this.reloadT + dt / this.reloadDur);
+      if (this.reloadT < 1) {
+        const r = this.reloadT;
+        const tilt = Math.sin(Math.min(1, r * 1.15) * Math.PI);
+        this.customGun.rotation.z += tilt * 0.48;
+        this.customGun.rotation.x += tilt * 0.18;
+        this.customGun.position.y -= tilt * 0.055;
+        if (this.activeCustomMesh && this.activeCustomMesh.userData.mag) {
+          const magOut = r > 0.18 && r < 0.65 ? Math.sin(((r - 0.18) / 0.47) * Math.PI) : 0;
+          this.activeCustomMesh.userData.mag.position.y = this.activeCustomMesh.userData.magBaseY - magOut * 0.22;
+        }
+      } else if (this.activeCustomMesh && this.activeCustomMesh.userData.mag) {
+        this.activeCustomMesh.userData.mag.position.y = this.activeCustomMesh.userData.magBaseY;
+      }
+
+      this.flashT += dt;
+      const silenced = this.gunDef && this.gunDef.silenced;
+      this.customFlash.visible = !silenced && this.flashT < 0.04;
+      this.customFlash.material.rotation = Math.random() * 6;
+      this.customFlashLight.intensity = !silenced && this.flashT < 0.05 ? 4.5 : 0;
     } else if (this.shown === 2) {
       const hideDrop = this.weapon !== 2 && this.switchT < 0.45 ? easeOut(this.switchT / 0.45) * 0.3 : 0;
       this.butterfly.group.position.y = -hideDrop;

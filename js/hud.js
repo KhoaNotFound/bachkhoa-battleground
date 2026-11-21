@@ -1,5 +1,6 @@
 import { escapeHtml } from './util.js';
 import { BOUNDS } from './map.js';
+import { getWeapon, WEAPON_SVGS } from './weapons.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -7,15 +8,135 @@ const $ = (id) => document.getElementById(id);
 export class HUD {
   constructor(minimapData) {
     this.el = {
-      hud: $('hud'), hpFill: $('hpFill'), hpGhost: $('hpGhost'), hpText: $('hpText'), ammo: $('ammo'),
-      slot0: $('slot0'), slot1: $('slot1'), slot2: $('slot2'), crosshair: $('crosshair'), hitmarker: $('hitmarker'),
+      hud: $('hud'), hpFill: $('hpFill'), hpGhost: $('hpGhost'), hpText: $('hpText'),
+      slot1: $('slot1'), slot2: $('slot2'), slot3: $('slot3'),
+      slot1Icon: $('slot1Icon'), slot1Name: $('slot1Name'), ammoPrimary: $('ammoPrimary'),
+      slot2Icon: $('slot2Icon'), slot2Name: $('slot2Name'), ammoSecondary: $('ammoSecondary'),
+      slot3Icon: $('slot3Icon'), slot3Name: $('slot3Name'),
+      crosshair: $('crosshair'), hitmarker: $('hitmarker'),
       scope: $('scope'), rangeText: $('rangeText'), vignette: $('dmgVignette'), dirs: $('dmgDirs'),
-      killfeed: $('killfeed'), center: $('centerMsg'), stats: $('stats'), sb: $('scoreboard'), sbBody: $('sbBody'),
+      killfeed: $('killfeed'), center: $('centerMsg'), killBanner: $('killBanner'), stats: $('stats'), sb: $('scoreboard'), sbBody: $('sbBody'),
       reloadBar: $('reloadBar'), protect: $('protect'), minimap: $('minimap'),
     };
     this.mm = this.el.minimap.getContext('2d');
     this.buildMapImage(minimapData);
     this.pings = [];
+    this.initKillEffects();
+  }
+  initKillEffects() {
+    this.killVideos = [];
+    this.activeKillVideo = null;
+    this.activeKillTier = 0;
+    this.killRaf = 0;
+    this.killCtx = this.el.killBanner ? this.el.killBanner.getContext('2d', { willReadFrequently: true }) : null;
+    for (let i = 1; i <= 6; i++) {
+      const v = document.createElement('video');
+      v.src = `assets/killfx/kill_${i}.mp4`;
+      v.preload = 'auto';
+      v.playsInline = true;
+      v.crossOrigin = 'anonymous';
+      v.addEventListener('ended', () => {
+        if (this.activeKillVideo === v) this.resetKillEffect();
+      });
+      this.killVideos.push(v);
+    }
+  }
+  showKillEffect(streak, volume = 0.8, onFallbackAudio = null) {
+    if (!this.el.killBanner || !this.killCtx) {
+      if (onFallbackAudio) onFallbackAudio();
+      return;
+    }
+    const tier = Math.max(1, Math.min(6, streak | 0));
+    if (this.activeKillVideo) {
+      try {
+        this.activeKillVideo.pause();
+        this.activeKillVideo.currentTime = 0;
+      } catch {}
+    }
+    const vid = this.killVideos[tier - 1];
+    this.activeKillVideo = vid;
+    this.activeKillTier = tier;
+    this.el.killBanner.classList.remove('hidden');
+    this.el.killBanner.style.opacity = '1';
+    try {
+      vid.currentTime = 0;
+      vid.volume = Math.max(0, Math.min(1, volume));
+      const p = vid.play();
+      if (p && p.catch) {
+        p.catch(() => {
+          // If autoplay with audio was blocked, play muted + trigger synthesized audio fallback
+          vid.muted = true;
+          vid.play().catch(() => {});
+          if (onFallbackAudio) onFallbackAudio();
+        });
+      }
+    } catch {
+      if (onFallbackAudio) onFallbackAudio();
+    }
+    if (!this.killRaf) {
+      const tick = () => {
+        if (!this.activeKillVideo) { this.killRaf = 0; return; }
+        this.drawKillEffectFrame();
+        this.killRaf = requestAnimationFrame(tick);
+      };
+      this.killRaf = requestAnimationFrame(tick);
+    }
+  }
+  drawKillEffectFrame() {
+    const vid = this.activeKillVideo;
+    const c = this.el.killBanner, g = this.killCtx;
+    if (!vid || !c || !g) return;
+    if (vid.readyState < 2) return;
+    const W = c.width, H = c.height;
+    g.clearRect(0, 0, W, H);
+    // Crop the bottom-center skull badge region (600x320 at x=660, y=710 in 1920x1080)
+    g.drawImage(vid, 660, 710, 600, 320, 0, 0, W, H);
+    const img = g.getImageData(0, 0, W, H);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], gr = d[i + 1], b = d[i + 2];
+      // Background green screen is ~(28, 119, 0); foreground skull & particles are neutral white ~(195, 196, 195)
+      const aB = (b - 10) * 1.45;
+      const aR = (r - 38) * 1.62;
+      const a = aB > aR ? aB : aR;
+      if (a <= 4 || (gr > r + 26 && gr > b + 42 && b < 26)) {
+        d[i + 3] = 0;
+      } else {
+        const alpha = a >= 255 ? 255 : a | 0;
+        const lum = Math.min(255, (r > b ? r : b) + 60);
+        d[i] = lum;
+        d[i + 1] = lum;
+        d[i + 2] = Math.min(255, lum + 6);
+        d[i + 3] = alpha;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    // Smooth fade-out at the tail of clips 1..4 if no subsequent kill interrupts them
+    if (this.activeKillTier <= 4 && vid.duration > 0) {
+      const rem = vid.duration - vid.currentTime;
+      c.style.opacity = rem < 0.25 ? String(Math.max(0, rem / 0.25)) : '1';
+    } else {
+      c.style.opacity = '1';
+    }
+  }
+  resetKillEffect() {
+    if (this.killRaf) {
+      cancelAnimationFrame(this.killRaf);
+      this.killRaf = 0;
+    }
+    if (this.activeKillVideo) {
+      try {
+        this.activeKillVideo.pause();
+        this.activeKillVideo.currentTime = 0;
+      } catch {}
+      this.activeKillVideo = null;
+    }
+    this.activeKillTier = 0;
+    if (this.el.killBanner && this.killCtx) {
+      this.killCtx.clearRect(0, 0, this.el.killBanner.width, this.el.killBanner.height);
+      this.el.killBanner.classList.add('hidden');
+      this.el.killBanner.style.opacity = '1';
+    }
   }
   buildMapImage(d) {
     const S = 3; // px per meter
@@ -99,7 +220,7 @@ export class HUD {
     const toScreen = (x, z) => { const dx = x - px, dz = z - pz; return [R + (dx * c - dz * s) * k, R + (dx * s + dz * c) * k, Math.hypot(dx, dz)]; };
     g.save();
     g.beginPath(); g.arc(R, R, R - 1, 0, 7); g.clip();
-    // enemies inside the minimap radius: red triangles, fainter when farther
+    // enemies & dummies inside the minimap radius
     if (others) for (const p of others.values()) {
       if (!p.alive || !p.pose) continue;
       const [sx, sy, d] = toScreen(p.pose.x, p.pose.z);
@@ -108,7 +229,7 @@ export class HUD {
       g.translate(sx, sy);
       g.rotate(yaw - (p.pose.yaw || 0));
       g.globalAlpha = 1 - 0.7 * (d / Rm);
-      g.fillStyle = '#ff3b3b'; g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 1.2;
+      g.fillStyle = p.isDummy ? '#ff9800' : '#ff3b3b'; g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 1.2;
       g.beginPath(); g.moveTo(0, -7); g.lineTo(5.5, 5); g.lineTo(-5.5, 5); g.closePath(); g.fill(); g.stroke();
       g.restore();
     }
@@ -155,12 +276,31 @@ export class HUD {
     this.el.hpText.textContent = Math.max(0, Math.ceil(hp));
     this.el.hpFill.parentElement.classList.toggle('low', hp <= 30);
   }
+  setLoadout(loadout, activeSlot, ammoMap, reserveText = '∞') {
+    const pW = getWeapon(loadout.primary);
+    const sW = getWeapon(loadout.secondary);
+    const mW = getWeapon(loadout.melee);
+    if (this.el.slot1) this.el.slot1.classList.toggle('on', activeSlot === 1);
+    if (this.el.slot2) this.el.slot2.classList.toggle('on', activeSlot === 2);
+    if (this.el.slot3) this.el.slot3.classList.toggle('on', activeSlot === 3);
+    if (this.el.slot1Name) this.el.slot1Name.textContent = pW.name;
+    if (this.el.slot1Icon) this.el.slot1Icon.innerHTML = WEAPON_SVGS[pW.id] || '';
+    if (this.el.ammoPrimary) this.el.ammoPrimary.innerHTML = `${ammoMap[pW.id] ?? pW.mag}<small>/${reserveText}</small>`;
+    if (this.el.slot2Name) this.el.slot2Name.textContent = sW.name;
+    if (this.el.slot2Icon) this.el.slot2Icon.innerHTML = WEAPON_SVGS[sW.id] || '';
+    if (this.el.ammoSecondary) this.el.ammoSecondary.innerHTML = `${ammoMap[sW.id] ?? sW.mag}<small>/${reserveText}</small>`;
+    if (this.el.slot3Name) this.el.slot3Name.textContent = mW.name;
+    if (this.el.slot3Icon) this.el.slot3Icon.innerHTML = WEAPON_SVGS[mW.id] || '';
+    this.el.crosshair.classList.toggle('fist', activeSlot === 3);
+  }
   setWeapon(w, ammo, reserveText = '∞') {
-    this.el.slot0.classList.toggle('on', w === 0);
-    this.el.slot1.classList.toggle('on', w === 1);
+    // Legacy compatibility wrapper
+    if (this.el.slot1) this.el.slot1.classList.toggle('on', w === 1);
     if (this.el.slot2) this.el.slot2.classList.toggle('on', w === 2);
-    this.el.ammo.innerHTML = `${ammo}<small>/${reserveText}</small>`;
-    this.el.crosshair.classList.toggle('fist', w === 0 || w === 2);
+    if (this.el.slot3) this.el.slot3.classList.toggle('on', w === 3 || w === 0);
+    if (this.el.ammoPrimary && w === 1) this.el.ammoPrimary.innerHTML = `${ammo}<small>/${reserveText}</small>`;
+    if (this.el.ammoSecondary && w === 2) this.el.ammoSecondary.innerHTML = `${ammo}<small>/${reserveText}</small>`;
+    this.el.crosshair.classList.toggle('fist', w === 0 || w === 3);
   }
   setSpread(px) { this.el.crosshair.style.setProperty('--gap', `${Math.round(6 + px)}px`); }
   setScope(on, range) {
@@ -199,8 +339,11 @@ export class HUD {
   killfeed(killer, victim, weapon, hs, mine, dist) {
     const div = document.createElement('div');
     div.className = 'kf' + (mine ? ' me' : '');
-    const wCls = weapon === 'fist' ? 'fist' : weapon === 'knife' ? 'knife' : 'awm';
-    div.innerHTML = `<span style="color:${killer.color}">${escapeHtml(killer.name)}</span><span class="wi ${wCls}"></span>${hs ? '<span class="hs" title="Headshot"></span>' : ''}<span style="color:${victim.color}">${escapeHtml(victim.name)}</span>${dist ? `<small style="opacity:.6">${Math.round(dist)}m</small>` : ''}`;
+    const svg = WEAPON_SVGS[weapon] || WEAPON_SVGS[weapon === 'awm' ? 'operator' : ''] || '';
+    const iconHtml = svg
+      ? `<span class="wi" style="display:inline-flex;align-items:center;justify-content:center;color:${weapon === 'knife' ? '#ffc83d' : '#fff'}">${svg}</span>`
+      : `<span class="wi ${weapon === 'fist' ? 'fist' : weapon === 'knife' ? 'knife' : 'awm'}"></span>`;
+    div.innerHTML = `<span style="color:${killer.color}">${escapeHtml(killer.name)}</span>${iconHtml}${hs ? '<span class="hs" title="Headshot"></span>' : ''}<span style="color:${victim.color}">${escapeHtml(victim.name)}</span>${dist ? `<small style="opacity:.6">${Math.round(dist)}m</small>` : ''}`;
     this.el.killfeed.prepend(div);
     while (this.el.killfeed.children.length > 6) this.el.killfeed.lastChild.remove();
     setTimeout(() => div.remove(), 7000);
