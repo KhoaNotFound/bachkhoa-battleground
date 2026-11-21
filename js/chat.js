@@ -27,14 +27,16 @@ export function cleanChat(s) {
 }
 
 export class Chat {
-  constructor({ onSend, onOpenChange }) {
-    this.onSend = onSend; this.onOpenChange = onOpenChange || (() => {});
+  constructor({ onSend, onCommand, onOpenChange }) {
+    this.onSend = onSend;
+    this.onCommand = onCommand || null;
+    this.onOpenChange = onOpenChange || (() => {});
     this.mine = new RateLimit(3, 2500, 900);
     this.lastText = ''; this.lastTextAt = 0;
     this.open = false;
     const el = (this.el = document.createElement('div'));
     el.id = 'chat';
-    el.innerHTML = `<ul class="chat-log"></ul><div class="chat-input hidden"><span>Tất cả</span><input maxlength="${CHAT_MAX}" placeholder="Nhập tin nhắn, Enter để gửi, Esc để huỷ" autocomplete="off"></div>`;
+    el.innerHTML = `<ul class="chat-log"></ul><div class="chat-input hidden"><span>Tất cả</span><input maxlength="${CHAT_MAX}" placeholder="Nhập tin nhắn hoặc lệnh (/time set day, /help)… Enter để gửi" autocomplete="off"></div>`;
     document.body.appendChild(el);
     this.log = el.querySelector('.chat-log');
     this.box = el.querySelector('.chat-input');
@@ -47,13 +49,17 @@ export class Chat {
     this.input.addEventListener('blur', () => { if (this.open) setTimeout(() => this.close(), 0); });
   }
   setVisible(v) { this.el.classList.toggle('hidden', !v); if (!v) this.close(); }
-  toggleOpen() {
+  toggleOpen(prefill = '') {
     if (this.open) return;
     this.open = true;
     this.el.classList.add('open');
     this.box.classList.remove('hidden');
-    this.input.value = '';
+    this.input.value = prefill;
     this.input.focus();
+    if (prefill) {
+      const len = prefill.length;
+      try { this.input.setSelectionRange(len, len); } catch {}
+    }
     this.onOpenChange(true);
   }
   close() {
@@ -64,9 +70,19 @@ export class Chat {
     this.input.blur();
     this.onOpenChange(false);
   }
+  clear() {
+    this.log.innerHTML = '';
+  }
   submit() {
     const text = cleanChat(this.input.value);
     if (!text) { this.close(); return; }
+    if (this.onCommand) {
+      const normalized = /^time\s+set\b/i.test(text) ? '/' + text : text;
+      if (normalized.startsWith('/') && this.onCommand(normalized)) {
+        this.close();
+        return;
+      }
+    }
     const now = performance.now();
     if (text === this.lastText && now - this.lastTextAt < 8000) { this.system('Đừng gửi lặp lại cùng một tin nhắn.'); return; }
     const w = this.mine.wait(now);

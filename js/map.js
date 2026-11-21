@@ -21,12 +21,12 @@ function edgeRect(a, u, n, s0, s1, o0, o1) {
 
 export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}) {
   const [meta, bin] = await Promise.all([
-    fetch(new URL('campus.json', BASE)).then((r) => r.json()),
-    fetch(new URL('campus.bin', BASE)).then((r) => r.arrayBuffer()),
+    fetch(new URL('campus.json?v=2', BASE)).then((r) => r.json()),
+    fetch(new URL('campus.bin?v=2', BASE)).then((r) => r.arrayBuffer()),
   ]);
   onProgress?.(35);
   const mmImg = new Image();
-  mmImg.src = new URL('minimap.png', BASE).href;
+  mmImg.src = new URL('minimap.png?v=2', BASE).href;
   const mmReady = mmImg.decode().catch(() => null);
 
   [BOUNDS.x0, BOUNDS.z0, BOUNDS.x1, BOUNDS.z1] = meta.bbox;
