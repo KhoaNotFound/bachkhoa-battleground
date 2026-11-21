@@ -16,6 +16,21 @@ async function sha256(s) {
   return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
 
+export async function verifyAdminKey(rawKey) {
+  const k = String(rawKey || '').trim();
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (!k) return isLocal ? 'local-dev' : null;
+  try {
+    const label = KEY_HASHES[await sha256(k)] || (isLocal && (k === 'dev' || k === 'admin' || k === 'localhost') ? 'local-dev' : null);
+    if (label) {
+      try { localStorage.setItem(LS_KEY, k); } catch {}
+    }
+    return label;
+  } catch {
+    return isLocal ? 'local-dev' : null;
+  }
+}
+
 export async function loadAdminKey() {
   const qs = new URLSearchParams(location.search);
   const fromUrl = qs.get('admin');
@@ -26,12 +41,19 @@ export async function loadAdminKey() {
   }
   let k = fromUrl;
   if (!k) try { k = localStorage.getItem(LS_KEY); } catch {}
-  try { return (!!k && KEY_HASHES[await sha256(k)]) || null; } catch { return null; }  // -> label or null
+  if (k) {
+    try {
+      const matched = KEY_HASHES[await sha256(k)];
+      if (matched) return matched;
+    } catch {}
+  }
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') return 'local-dev';
+  return null;
 }
 
 export class Inspector {
-  constructor({ camera, canvas, onExit }) {
-    this.camera = camera; this.canvas = canvas; this.onExit = onExit;
+  constructor({ camera, canvas, onExit, onCycleTime }) {
+    this.camera = camera; this.canvas = canvas; this.onExit = onExit; this.onCycleTime = onCycleTime || null;
     this.active = false; this.keys = {};
     this.pos = new THREE.Vector3(); this.yaw = 0; this.pitch = 0;
     this.speed = 25; this.fov = 70; this.hideUi = false;
@@ -39,7 +61,7 @@ export class Inspector {
     this.el.className = 'inspect-ui hidden';
     this.el.innerHTML = `
       <div class="inspect-coords"></div>
-      <div class="inspect-help">Click: điều khiển · WASD bay · Space/C lên/xuống · Shift nhanh · Lăn chuột: tốc độ · [ ] FOV · P: copy toạ độ · H: ẩn chữ · Backspace: về lobby</div>
+      <div class="inspect-help">Click: điều khiển · WASD bay · Space/C lên/xuống · Shift nhanh · Lăn chuột: tốc độ · [ ] FOV · N: ngày/đêm · /: lệnh admin · P: copy toạ độ · H: ẩn chữ · Backspace: về lobby</div>
       <div class="inspect-toast"></div>`;
     document.body.appendChild(this.el);
     this.coords = this.el.querySelector('.inspect-coords');
@@ -51,6 +73,7 @@ export class Inspector {
       if (e.code === 'Space' || e.code === 'Tab') e.preventDefault();
       if (e.code === 'KeyH') { this.hideUi = !this.hideUi; this.el.classList.toggle('bare', this.hideUi); }
       if (e.code === 'KeyP') this.copy();
+      if (e.code === 'KeyN' && this.onCycleTime) { const label = this.onCycleTime(); if (label) this.flash(`Thời gian: ${label}`); }
       if (e.code === 'BracketLeft') this.fov = clamp(this.fov - 5, 20, 110);
       if (e.code === 'BracketRight') this.fov = clamp(this.fov + 5, 20, 110);
       if (e.code === 'Backspace') { e.preventDefault(); this.exit(); }

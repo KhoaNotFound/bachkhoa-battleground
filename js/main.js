@@ -7,7 +7,7 @@ import { VFX } from './vfx.js';
 import { Audio } from './audio.js';
 import { Net } from './net.js';
 import { HUD } from './hud.js';
-import { Inspector, loadAdminKey } from './admin.js';
+import { Inspector, loadAdminKey, verifyAdminKey } from './admin.js';
 import { Chat, RateLimit, cleanChat } from './chat.js';
 import { clamp, damp, lerp, lerpAngle, angleDiff, cleanName, escapeHtml, r2, r3 } from './util.js';
 
@@ -95,7 +95,81 @@ setShadowArea(75);
 // One cycle every 10 real minutes, from the wall clock so every player sees the same time.
 // Phase 0 = sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight. ?daytime=0.75 forces a phase (testing).
 const DAY_MS = 10 * 60 * 1000;
-const forcedPhase = qs.has('daytime') ? (+qs.get('daytime') % 1 + 1) % 1 : null;
+let forcedPhase = qs.has('daytime') ? (+qs.get('daytime') % 1 + 1) % 1 : null;
+const TIME_PRESETS = {
+  day:      { ph: 0.16, label: 'Buổi sáng (Day · 09:50)' },
+  morning:  { ph: 0.16, label: 'Buổi sáng (Day · 09:50)' },
+  sang:     { ph: 0.16, label: 'Buổi sáng (Day · 09:50)' },
+  buoisang: { ph: 0.16, label: 'Buổi sáng (Day · 09:50)' },
+  noon:     { ph: 0.25, label: 'Buổi trưa (Noon · 12:00)' },
+  midday:   { ph: 0.25, label: 'Buổi trưa (Noon · 12:00)' },
+  trua:     { ph: 0.25, label: 'Buổi trưa (Noon · 12:00)' },
+  sunrise:  { ph: 0.02, label: 'Bình minh (Sunrise · 06:30)' },
+  dawn:     { ph: 0.02, label: 'Bình minh (Sunrise · 06:30)' },
+  binhminh: { ph: 0.02, label: 'Bình minh (Sunrise · 06:30)' },
+  sunset:   { ph: 0.48, label: 'Hoàng hôn (Sunset · 17:30)' },
+  dusk:     { ph: 0.48, label: 'Hoàng hôn (Sunset · 17:30)' },
+  evening:  { ph: 0.48, label: 'Hoàng hôn (Sunset · 17:30)' },
+  chieu:    { ph: 0.48, label: 'Hoàng hôn (Sunset · 17:30)' },
+  hoanghon: { ph: 0.48, label: 'Hoàng hôn (Sunset · 17:30)' },
+  night:    { ph: 0.75, label: 'Buổi tối (Night · 00:00)' },
+  toi:      { ph: 0.75, label: 'Buổi tối (Night · 00:00)' },
+  dem:      { ph: 0.75, label: 'Buổi tối (Night · 00:00)' },
+  buoitoi:  { ph: 0.75, label: 'Buổi tối (Night · 00:00)' },
+  midnight: { ph: 0.75, label: 'Nửa đêm (Midnight · 00:00)' },
+  khuya:    { ph: 0.75, label: 'Nửa đêm (Midnight · 00:00)' },
+  auto:     { ph: null, label: 'Chu kỳ tự động (Auto 10 phút)' },
+  cycle:    { ph: null, label: 'Chu kỳ tự động (Auto 10 phút)' },
+  reset:    { ph: null, label: 'Chu kỳ tự động (Auto 10 phút)' },
+};
+function parseTimeArg(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (!s) return null;
+  if (Object.prototype.hasOwnProperty.call(TIME_PRESETS, s)) return TIME_PRESETS[s];
+  const hMatch = s.match(/^(\d+(?:\.\d+)?)\s*(?:h|giờ|gio|:00)$/);
+  if (hMatch) {
+    const hr = (+hMatch[1]) % 24;
+    const ph = ((((hr - 6) / 24) % 1) + 1) % 1;
+    return { ph, label: `${hr.toFixed(1).replace(/\.0$/, '')}h00 (phase ${ph.toFixed(2)})` };
+  }
+  const num = Number(s);
+  if (Number.isFinite(num)) {
+    if (num >= 100) {
+      // Minecraft ticks (0 = 6:00 sunrise, 1000 = day, 6000 = noon, 13000 = night, 18000 = midnight)
+      const ph = (((num % 24000) / 24000) + 1) % 1;
+      return { ph, label: `${Math.round(num)} ticks (phase ${ph.toFixed(2)})` };
+    }
+    if (num > 1 && num <= 24) {
+      const ph = ((((num - 6) / 24) % 1) + 1) % 1;
+      return { ph, label: `${num.toFixed(1).replace(/\.0$/, '')}h00 (phase ${ph.toFixed(2)})` };
+    }
+    const ph = ((num % 1) + 1) % 1;
+    const hr = ((ph * 24 + 6) % 24);
+    const hh = String(Math.floor(hr)).padStart(2, '0');
+    const mm = String(Math.floor((hr % 1) * 60)).padStart(2, '0');
+    return { ph, label: `${hh}:${mm} (phase ${ph.toFixed(2)})` };
+  }
+  return null;
+}
+function setTimeOfDay(arg, broadcast = true) {
+  const parsed = typeof arg === 'object' && arg !== null ? arg : parseTimeArg(arg);
+  if (!parsed) return null;
+  forcedPhase = parsed.ph;
+  updateDayNight();
+  if (broadcast && net.connected) {
+    net.send({ t: 'env', ph: forcedPhase, label: parsed.label, by: myName() });
+  }
+  return parsed;
+}
+const CYCLE_ORDER = ['day', 'noon', 'sunset', 'night', 'sunrise', 'auto'];
+let cycleIdx = 0;
+function cycleTimePreset() {
+  const key = CYCLE_ORDER[cycleIdx % CYCLE_ORDER.length];
+  cycleIdx++;
+  const res = setTimeOfDay(key, true);
+  if (res && chat) chat.system(`[Admin] Đã chuyển thời gian: ${res.label}`);
+  return res ? res.label : '';
+}
 const lightDir = new THREE.Vector3(), moonDir = new THREE.Vector3();
 const DN = {
   dayTop: new THREE.Color(0x3d86d6), dayHor: new THREE.Color(0xd4e6f4), dayBot: new THREE.Color(0x9fb3c2),
@@ -161,7 +235,15 @@ const feed = [];
     hud = new HUD(map.minimap);
     chat = new Chat({
       onSend: (text) => { net.send({ t: 'chat', m: text }); chat.add(myName(), me.color, text, true); },
-      onOpenChange: (open) => { if (open) { for (const k in keys) keys[k] = false; firing = false; adsHeld = false; } },
+      onCommand: (cmdText) => handleChatCommand(cmdText),
+      onOpenChange: (open) => {
+        if (open) {
+          for (const k in keys) keys[k] = false;
+          if (inspector) inspector.keys = {};
+          firing = false;
+          adsHeld = false;
+        }
+      },
     });
     vm = new ViewModel(renderer, audio);
     vm.setColor(me.color);
@@ -244,7 +326,12 @@ function setupLobby() {
   $('playBtn').onclick = () => { if (!net.connected) return; audio.init(); audio.ui(); spawn(); };
   $('resumeBtn').onclick = () => { lockPointer(); };
   // admin: free camera to inspect the map (name + key, see admin.js)
-  inspector = new Inspector({ camera, canvas, onExit: () => { state = 'lobby'; $('lobby').classList.remove('hidden'); renderLobby(); } });
+  inspector = new Inspector({
+    camera,
+    canvas,
+    onExit: () => { state = 'lobby'; $('lobby').classList.remove('hidden'); renderLobby(); },
+    onCycleTime: () => (isAdmin() ? cycleTimePreset() : ''),
+  });
   const ib = document.createElement('button');
   ib.id = 'inspectBtn'; ib.className = 'inspect-btn hidden'; ib.textContent = 'ADMIN · INSPECT MAP';
   ib.onclick = () => { if (!isAdmin()) return; state = 'inspect'; $('lobby').classList.add('hidden'); inspector.enter(); };
@@ -273,6 +360,202 @@ function myName() { return cleanName(settings.name); }
 let inspector = null, adminKey = false, chat = null;
 const isAdmin = () => !!adminKey;
 function updateAdminBtn() { const b = $('inspectBtn'); if (b) b.classList.toggle('hidden', !isAdmin()); }
+
+// ---------------- admin slash commands ----------------
+function handleChatCommand(rawText) {
+  const trimmed = String(rawText || '').trim();
+  if (!trimmed.startsWith('/')) return false;
+  const parts = trimmed.slice(1).trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return true;
+  const cmd = parts[0].toLowerCase();
+  const args = parts.slice(1);
+
+  if (cmd === 'clear' || cmd === 'cls') {
+    chat?.clear();
+    return true;
+  }
+
+  if (cmd === 'admin') {
+    const keyArg = args.join(' ');
+    if (!keyArg && isAdmin()) {
+      chat?.system(`[Admin] Đang bật chế độ Admin (${adminKey}). Gõ /help để xem danh sách lệnh.`);
+      return true;
+    }
+    verifyAdminKey(keyArg || 'dev').then((label) => {
+      if (label) {
+        adminKey = label;
+        updateAdminBtn();
+        chat?.system(`[Admin] Đã kích hoạt quyền Admin (${label})! Gõ /help để xem các lệnh.`);
+      } else {
+        chat?.system('[Admin] Khóa Admin không hợp lệ.');
+      }
+    });
+    return true;
+  }
+
+  if (cmd === 'help' || cmd === '?') {
+    if (!isAdmin()) {
+      chat?.system('Lệnh cơ bản: /clear (xoá khung chat), /admin <key> (mở quyền Admin).');
+      return true;
+    }
+    chat?.system('=== LỆNH ADMIN (BÁCH KHOA BATTLEGROUND) ===');
+    chat?.system('• /time set <day|noon|sunset|night|sunrise|midnight|auto|0..24h> : Đổi buổi sáng/trưa/chiều/tối');
+    chat?.system('• /day, /noon, /sunset, /night, /sunrise : Phím tắt đổi nhanh thời gian');
+    chat?.system('• /fly hoặc /inspect : Bật/tắt camera bay tự do (Inspector)');
+    chat?.system('• /tp <x> <z> | /tp <x> <y> <z> | /tp <tên> : Dịch chuyển tức thời');
+    chat?.system('• /speed <0.5..5> : Đổi tốc độ chạy (mặc định 1)');
+    chat?.system('• /heal [hp] : Hồi đầy máu · /god : Bất tử · /ammo : Đạn vô hạn');
+    return true;
+  }
+
+  if (!isAdmin()) {
+    chat?.system('[Admin] Bạn cần quyền Admin để dùng lệnh này. (Dùng ?admin=<key> hoặc /admin <key>)');
+    return true;
+  }
+
+  // /day, /night, /noon, /sunrise, /sunset, /midnight, /auto shortcuts
+  if (['day', 'night', 'noon', 'sunrise', 'sunset', 'dusk', 'midnight', 'morning', 'auto'].includes(cmd)) {
+    const res = setTimeOfDay(cmd, true);
+    if (res) chat?.system(`[Admin] Đã chỉnh thời gian: ${res.label}`);
+    return true;
+  }
+
+  // /time set <val> or /time <val>
+  if (cmd === 'time') {
+    const sub = (args[0] || '').toLowerCase();
+    const targetArg = (sub === 'set' || sub === 'add') ? args[1] : args[0];
+    if (!targetArg) {
+      chat?.system('Cách dùng: /time set <day | noon | sunset | night | sunrise | midnight | auto | 0..24h>');
+      return true;
+    }
+    let parsed = parseTimeArg(targetArg);
+    if (sub === 'add' && parsed && parsed.ph !== null) {
+      const cur = forcedPhase ?? (Date.now() % DAY_MS) / DAY_MS;
+      const nextPh = ((cur + parsed.ph) % 1 + 1) % 1;
+      parsed = parseTimeArg(String(nextPh));
+    }
+    if (!parsed) {
+      chat?.system(`[Admin] Giá trị thời gian "${targetArg}" không hợp lệ. Dùng: day, noon, sunset, night, sunrise, auto, hoặc giờ (vd: 8h, 18h).`);
+      return true;
+    }
+    setTimeOfDay(parsed, true);
+    chat?.system(`[Admin] Đã chỉnh thời gian sang: ${parsed.label}`);
+    if (inspector?.active) inspector.flash(`Thời gian: ${parsed.label}`);
+    return true;
+  }
+
+  // /fly or /inspect
+  if (cmd === 'fly' || cmd === 'inspect' || cmd === 'freecam') {
+    if (state === 'inspect') {
+      inspector.exit();
+      chat?.system('[Admin] Đã thoát chế độ Camera bay (Inspect).');
+    } else {
+      if (state === 'playing' && me.alive) {
+        me.alive = false;
+        net.send({ t: 'despawn' });
+        sendHello();
+        hud.show(false);
+        hud.setScope(false);
+      }
+      $('lobby').classList.add('hidden');
+      $('pause').classList.add('hidden');
+      $('death').classList.add('hidden');
+      state = 'inspect';
+      inspector.enter();
+      chat?.system('[Admin] Đã bật Camera bay tự do (Nhấn N để đổi ngày/đêm, Backspace về lobby).');
+    }
+    return true;
+  }
+
+  // /tp <x> <z> | /tp <x> <y> <z> | /tp <playerName>
+  if (cmd === 'tp' || cmd === 'teleport') {
+    if (!args.length) {
+      chat?.system('Cách dùng: /tp <x> <z> hoặc /tp <x> <y> <z> hoặc /tp <tên_người_chơi>');
+      return true;
+    }
+    let tx = null, ty = null, tz = null, label = '';
+    if (args.length >= 2 && Number.isFinite(+args[0]) && Number.isFinite(+args[1])) {
+      if (args.length >= 3 && Number.isFinite(+args[2])) {
+        tx = +args[0]; ty = +args[1]; tz = +args[2];
+      } else {
+        tx = +args[0]; ty = state === 'inspect' ? inspector.pos.y : me.pos.y; tz = +args[1];
+      }
+      label = `(${tx.toFixed(1)}, ${ty.toFixed(1)}, ${tz.toFixed(1)})`;
+    } else {
+      const q = args.join(' ').toLowerCase();
+      for (const p of peers.values()) {
+        if (p.name && p.name.toLowerCase().includes(q) && (p.pose || p.last)) {
+          const s = p.pose || p.last;
+          tx = s.x; ty = s.y + 1; tz = s.z;
+          label = `${p.name} (${tx.toFixed(1)}, ${tz.toFixed(1)})`;
+          break;
+        }
+      }
+      if (tx === null) {
+        chat?.system(`[Admin] Không tìm thấy người chơi hoặc tọa độ "${args.join(' ')}".`);
+        return true;
+      }
+    }
+    if (state === 'inspect' && inspector) {
+      inspector.pos.set(tx, Math.max(0.5, ty), tz);
+      chat?.system(`[Admin] Đã dịch chuyển camera tới ${label}.`);
+    } else if (state === 'playing' && me.alive) {
+      me.pos.set(clamp(tx, BOUNDS.x0 + 1, BOUNDS.x1 - 1), Math.max(0, ty), clamp(tz, BOUNDS.z0 + 1, BOUNDS.z1 - 1));
+      me.vel.set(0, 0, 0);
+      sendState(true);
+      chat?.system(`[Admin] Đã dịch chuyển tới ${label}.`);
+    } else {
+      chat?.system('[Admin] Hãy vào trận hoặc bật /fly trước khi dịch chuyển.');
+    }
+    return true;
+  }
+
+  // /speed <mult>
+  if (cmd === 'speed') {
+    const val = args.length ? +args[0] : 1;
+    if (!Number.isFinite(val) || val < 0.2 || val > 10) {
+      chat?.system('Cách dùng: /speed <0.5 .. 5> (mặc định: /speed 1)');
+      return true;
+    }
+    me.speedMult = val;
+    if (inspector?.active) inspector.speed = clamp(25 * val, 2, 400);
+    chat?.system(`[Admin] Tốc độ di chuyển: x${val.toFixed(2)}`);
+    return true;
+  }
+
+  // /heal or /hp [amount]
+  if (cmd === 'heal' || cmd === 'hp') {
+    const hpVal = args.length && Number.isFinite(+args[0]) ? clamp(Math.round(+args[0]), 1, 9999) : MAX_HP;
+    me.hp = hpVal;
+    if (hud) { hud.setHP(me.hp); hud.lowHealth(me.hp); }
+    chat?.system(`[Admin] Đã đặt máu: ${me.hp} HP.`);
+    return true;
+  }
+
+  // /god
+  if (cmd === 'god') {
+    me.god = !me.god;
+    if (me.god) {
+      me.hp = Math.max(me.hp, MAX_HP);
+      if (hud) { hud.setHP(me.hp); hud.lowHealth(me.hp); }
+    }
+    chat?.system(`[Admin] Chế độ Bất tử (God Mode): ${me.god ? 'BẬT' : 'TẮT'}`);
+    return true;
+  }
+
+  // /ammo
+  if (cmd === 'ammo') {
+    me.infAmmo = !me.infAmmo;
+    me.ammo = AWM.mag;
+    me.reloadEnd = 0;
+    if (hud) { hud.setWeapon(me.weapon, me.ammo); hud.setReload(-1); }
+    chat?.system(`[Admin] Đạn vô hạn (Infinite Ammo): ${me.infAmmo ? 'BẬT' : 'TẮT'} (Đã nạp đầy ${AWM.mag} viên)`);
+    return true;
+  }
+
+  chat?.system(`[Admin] Không rõ lệnh "/${cmd}". Gõ /help để xem danh sách lệnh.`);
+  return true;
+}
 
 // ---------------- spawn / death ----------------
 function spawn() {
@@ -318,7 +601,7 @@ function lockPointer() {
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === canvas;
   if (locked) $('pause').classList.add('hidden');
-  else if (state === 'playing') { $('pause').classList.remove('hidden'); firing = false; adsHeld = false; for (const k in keys) keys[k] = false; }
+  else if (state === 'playing' && !chat?.open) { $('pause').classList.remove('hidden'); firing = false; adsHeld = false; for (const k in keys) keys[k] = false; }
 });
 document.addEventListener('pointerlockerror', () => { if (state === 'playing') $('pause').classList.remove('hidden'); });
 
@@ -367,7 +650,7 @@ function leaveToLobby() {
 addEventListener('keydown', (e) => {
   if (e.target && e.target.tagName === 'INPUT') return;
   if (e.code === 'Tab') { e.preventDefault(); showBoard = true; }
-  if ((e.code === 'Slash' || e.key === '/') && !e.repeat && chat && state !== 'loading' && state !== 'inspect') { e.preventDefault(); chat.toggleOpen(); return; }
+  if ((e.code === 'Slash' || e.key === '/') && !e.repeat && chat && state !== 'loading') { e.preventDefault(); chat.toggleOpen(); return; }
   if (state !== 'playing') return;
   keys[e.code] = true;
   if (e.code === 'Digit1') switchWeapon(0);
@@ -501,8 +784,9 @@ function tryFire(heavy = false) {
   }
   // AWM
   if (me.reloadEnd > now || now < me.nextFire) return;
-  if (me.ammo <= 0) { audio.dry(); startReload(); return; }
-  me.ammo--;
+  if (me.ammo <= 0 && !me.infAmmo) { audio.dry(); startReload(); return; }
+  if (!me.infAmmo) me.ammo--;
+  else me.ammo = AWM.mag;
   me.nextFire = now + AWM.cd;
   const hs = Math.hypot(me.vel.x, me.vel.z);
   const scoped = me.ads > 0.92;
@@ -713,6 +997,14 @@ function onNetMessage(from, m) {
       if (p.avatar) p.avatar.say(text);
       break;
     }
+    case 'env': {
+      forcedPhase = (m.ph === null || m.ph === undefined) ? null : clamp(+m.ph || 0, 0, 1);
+      updateDayNight();
+      const who = cleanName(m.by || p.name || 'Admin');
+      const lbl = cleanChat(m.label || (forcedPhase === null ? 'Chu kỳ tự động' : `phase ${forcedPhase.toFixed(2)}`));
+      chat?.system(`[Admin] ${who} đã chỉnh thời gian sang: ${lbl}`);
+      break;
+    }
   }
 }
 function closestOnSeg(a, b, p) {
@@ -728,7 +1020,7 @@ function addKill(killer, victim, weapon, hs, mine, dist) {
 function onDamaged(attacker, m) {
   const now = performance.now();
   if (state !== 'playing' || !me.alive) return;
-  if (now < me.protectedUntil) return;
+  if (now < me.protectedUntil || me.god) return;
   const dmg = clamp(+m.d || 0, 0, 300);
   me.hp -= dmg;
   me.lastDamage = now;
@@ -778,7 +1070,7 @@ function updatePlayer(dt, now) {
   const wx = fx * cos + fz * sin, wz = -fx * sin + fz * cos;
   const sprint = keys.ShiftLeft && fz < 0 && !me.crouching && me.ads < 0.3;
   me.sprint = !!sprint;
-  let speed = me.crouching ? 2.8 : sprint ? 8.2 : 5.4;
+  let speed = (me.crouching ? 2.8 : sprint ? 8.2 : 5.4) * (me.speedMult || 1);
   if (me.ads > 0.5) speed *= 0.55;
   if (me.weapon === 0 && !me.crouching) speed *= 1.08;
   if (me.weapon === 2 && !me.crouching) speed *= 1.15;
@@ -793,7 +1085,7 @@ function updatePlayer(dt, now) {
   mover.move(me, dt, h);
   if (!wasGround && me.onGround && fallV < -3.5) {
     me.landImpulse = Math.min(1.5, -fallV / 11);
-    if (fallV < -7) { audio.land(); me.landDip = Math.min(0.25, -fallV * 0.02); if (fallV < -16) { /* fall damage */ const d = Math.round((-fallV - 16) * 6); if (d > 0) { me.hp -= d; hud.setHP(me.hp); hud.damage(null, d); if (me.hp <= 0) die(null, { w: 'fall' }); } } }
+    if (fallV < -7) { audio.land(); me.landDip = Math.min(0.25, -fallV * 0.02); if (fallV < -16 && !me.god) { /* fall damage */ const d = Math.round((-fallV - 16) * 6); if (d > 0) { me.hp -= d; hud.setHP(me.hp); hud.damage(null, d); if (me.hp <= 0) die(null, { w: 'fall' }); } } }
   }
   // keep inside bounds (safety)
   me.pos.x = clamp(me.pos.x, BOUNDS.x0 + 0.5, BOUNDS.x1 - 0.5);
@@ -990,4 +1282,4 @@ function frame() {
 }
 
 // test hooks
-window.__game = { audio, get hud() { return hud; }, get chat() { return chat; }, get inspector() { return inspector; }, me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
+window.__game = { audio, get hud() { return hud; }, get chat() { return chat; }, get inspector() { return inspector; }, me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, setTimeOfDay, handleChatCommand, get forcedPhase() { return forcedPhase; }, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
