@@ -6,7 +6,10 @@ import { buildGate } from './landmarks.js';
 
 // Map loaded from the campus OBJ export, converted by tools/build_obj_map.py into
 // assets/map/campus.{bin,json} + minimap.png. Coordinates are meters, Y up.
-const BASE = new URL('../assets/map/', import.meta.url);
+// ?map=review loads the map under review instead (assets/map-review/, built from the map.blend
+// pipeline: tools/build_buildings.py -> build_obj_map.py --out assets/map-review). Same format.
+export const REVIEW_MAP = new URLSearchParams(location.search).get('map') === 'review';
+const BASE = new URL(REVIEW_MAP ? '../assets/map-review/' : '../assets/map/', import.meta.url);
 
 // Filled in by buildMap() before anything reads them (HUD and main use them after boot).
 export const BOUNDS = { x0: -1, z0: -1, x1: 1, z1: 1 };
