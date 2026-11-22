@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CollisionWorld, Mover } from './physics.js';
-import { buildMap, BOUNDS } from './map.js';
+import { buildMap, BOUNDS, REVIEW_MAP } from './map.js';
 import { Avatar, Debris, rayPlayer } from './avatar.js';
 import { ViewModel } from './viewmodel.js';
 import { VFX } from './vfx.js';
@@ -208,7 +208,15 @@ const mover = new Mover(world);
 let map, hud, vm, vfx, debris, buyMenu;
 const audio = new Audio();
 audio.setVolume(settings.vol);
-const net = new Net(qs.get('room'));
+// the review map gets its own rooms, so its players never mix with the ones on the live map
+const net = new Net(REVIEW_MAP ? 'review-' + (qs.get('room') || 'main') : qs.get('room'));
+if (REVIEW_MAP) {
+  document.title = 'Bách Khoa Battleground · Thử map mới';
+  const sub = document.querySelector('.brand .sub');
+  if (sub) sub.textContent = 'Chế độ thử map mới (map.blend) · Đấu tự do · Mỗi người 100 HP';
+  const tip = $('mapModeTip');
+  if (tip) tip.innerHTML = '<a href="./" style="color:#a8e6ff">← Quay lại map cũ</a> (phòng chơi riêng, không chung với map cũ).';
+}
 const peers = new Map();
 const dummies = new Map();
 let dummySeq = 0;
