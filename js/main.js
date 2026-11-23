@@ -96,10 +96,9 @@ function setShadowArea(r) {
 setShadowArea(75);
 
 // ---------------- day / night ----------------
-// One cycle every 10 real minutes, from the wall clock so every player sees the same time.
-// Phase 0 = sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight. ?daytime=0.75 forces a phase (testing).
+// Default to bright daytime (phase 0.16 = 09:50) in normal battle mode; night/cycle can still be enabled via admin commands (/night, /time, /auto) or ?daytime=.
 const DAY_MS = 10 * 60 * 1000;
-let forcedPhase = qs.has('daytime') ? (+qs.get('daytime') % 1 + 1) % 1 : null;
+let forcedPhase = qs.has('daytime') ? (+qs.get('daytime') % 1 + 1) % 1 : 0.16;
 const TIME_PRESETS = {
   day:      { ph: 0.16, label: 'Buổi sáng (Day · 09:50)' },
   morning:  { ph: 0.16, label: 'Buổi sáng (Day · 09:50)' },

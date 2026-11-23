@@ -498,7 +498,7 @@ export class CollectionUI {
             ? `<img class="col-weapon-img" src="${eq.thumb}" alt="${displayName}" loading="lazy">`
             : `<div class="col-weapon-svg">${WEAPON_SVGS[svgKey] || ''}</div>`;
 
-          const skinLabel = eq && eq.id !== `${wid}_default` ? `<span class="col-weapon-skin">${eq.name}</span>` : '';
+          const skinLabel = eq ? `<span class="col-weapon-skin">${eq.subtitle || eq.name}</span>` : '';
           const badgeHtml = total > 1
             ? `<span class="col-weapon-count ${owned === total ? 'full' : ''}">${owned}/${total}</span>`
             : '';

@@ -159,6 +159,10 @@ export class ViewModel {
     this.vandalHipPos = new THREE.Vector3(0.115, -0.112, -0.40);
     this.vandalAdsPos = new THREE.Vector3(0, -0.052, -0.25);
     this._vandalPos = new THREE.Vector3();
+    this._vandalCatchPlayed = false;
+    this.customInspectT = -1;
+    this.customInspectHeld = false;
+    this._customCatchPlayed = false;
 
     this.customFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: TX.flashStar(), color: 0xffe0a0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
     this.customFlash.scale.setScalar(0.14);
@@ -503,21 +507,26 @@ export class ViewModel {
 
   _buildCustomGun(w, includeHands = true) {
     const g = new THREE.Group();
+    const bodyGroup = new THREE.Group();
+    const handsGroup = new THREE.Group();
+    g.add(bodyGroup, handsGroup);
     const bodyMat = new THREE.MeshStandardMaterial({ color: w.color || 0x2f353d, roughness: 0.45, metalness: 0.45 });
     const darkMat = new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.55, metalness: 0.5 });
     const accentMat = new THREE.MeshStandardMaterial({ color: w.accent || 0x2ce5b5, roughness: 0.35, metalness: 0.55 });
     const addBox = (sx, sy, sz, x, y, z, mat = bodyMat, rx = 0, ry = 0, rz = 0) => {
+      const isHand = (mat === this.sleeveMat || mat === this.skinMat);
+      if (isHand && !includeHands) return null;
       const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
       m.position.set(x, y, z);
       m.rotation.set(rx, ry, rz);
-      g.add(m);
+      (isHand ? handsGroup : bodyGroup).add(m);
       return m;
     };
     const addCyl = (r, len, x, y, z, mat = darkMat, rx = Math.PI / 2) => {
       const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), mat);
       m.position.set(x, y, z);
       m.rotation.x = rx;
-      g.add(m);
+      bodyGroup.add(m);
       return m;
     };
 
@@ -669,6 +678,8 @@ export class ViewModel {
     g.userData.muzzleZ = muzzleZ;
     g.userData.mag = magMesh;
     g.userData.magBaseY = magMesh ? magMesh.position.y : 0;
+    g.userData.bodyGroup = bodyGroup;
+    g.userData.handsGroup = handsGroup;
     return g;
   }
 
@@ -678,11 +689,27 @@ export class ViewModel {
     const prevSkinId = this.skinDef ? this.skinDef.id : null;
     this.gunDef = wDef;
     this.skinDef = skinDef;
-    this.useAwpGlb = wDef.modelType === 'awp_glb';
-    this.useVandalGlb = wDef.modelType === 'vandal_glb';
+
+    const glbUrl = skinDef?.glb || null;
+    this.useAwpGlb = glbUrl === 'assets/awp-dragon-lore.glb';
+    this.useVandalGlb = !!(glbUrl && !this.useAwpGlb);
 
     if (this.useVandalGlb) {
-      const glbUrl = skinDef?.glb || 'assets/skins/vandal/vandal-default.glb';
+      const isPistol = wDef.slot === 'secondary';
+      const isSniper = wDef.id === 'operator';
+      if (isPistol) {
+        this.vandalHipPos.set(0.11, -0.105, -0.32);
+        this.vandalAdsPos.set(0, -0.056, -0.22);
+        this.vandalFlash.position.set(0, 0.02, -0.34);
+      } else if (isSniper) {
+        this.vandalHipPos.set(0.115, -0.105, -0.43);
+        this.vandalAdsPos.set(0, -0.042, -0.22);
+        this.vandalFlash.position.set(0, 0.015, -0.55);
+      } else {
+        this.vandalHipPos.set(0.115, -0.112, -0.40);
+        this.vandalAdsPos.set(0, -0.052, -0.25);
+        this.vandalFlash.position.set(0, 0.015, -0.53);
+      }
       this._loadOrActivateVandalGLB(glbUrl);
     } else if (!this.useAwpGlb) {
       if (this.activeCustomMesh) this.activeCustomMesh.visible = false;
@@ -701,6 +728,7 @@ export class ViewModel {
       this.switchT = 0;
       this.awmDrawTriggered = false;
       this.vandalDrawTriggered = false;
+      this.customInspectT = -1;
       this.reloadT = 1;
     }
   }
@@ -714,6 +742,8 @@ export class ViewModel {
       this.knifeDrawTriggered = false;
       this.awmInspectHeld = false;
       this.vandalInspectHeld = false;
+      this.customInspectHeld = false;
+      this.customInspectT = -1;
       if (w !== 2) this.butterfly.setInspect(false);
       if (w !== 1 && (this.awmActiveName === 'reload' || this.awmActiveName === 'inspect')) {
         this._playAwmClip('idle', 0.05, true);
@@ -730,6 +760,7 @@ export class ViewModel {
     const want = !!held;
     this.awmInspectHeld = want;
     this.vandalInspectHeld = want;
+    this.customInspectHeld = want;
     if (this.weapon === 2) {
       this.butterfly.setInspect(want);
     } else if (this.weapon === 1 && this.useAwpGlb && want) {
@@ -744,8 +775,21 @@ export class ViewModel {
     } else if (this.weapon === 1 && this.useVandalGlb && want && this.vandalActive) {
       const an = this.vandalActive.activeName;
       const busy = an === 'fire' || an === 'reload' || an === 'draw' || this.ads > 0.05;
-      if (!busy && (an === 'idle' || an === 'inspect')) {
+      if (this.gunDef && this.gunDef.slot === 'secondary') {
+        // Use the exact same YXZ procedural pistol inspect for GLB pistols (USP-S, Desert Eagle)
+        if (!busy && this.customInspectT < 0) {
+          this.customInspectT = 0;
+          this._customCatchPlayed = false;
+        }
+      } else if (!busy && (an === 'idle' || an === 'inspect')) {
+        this._vandalCatchPlayed = false;
         this._playVandalClip('inspect', 0.12, false);
+      }
+    } else if (this.weapon === 1 && !this.useAwpGlb && !this.useVandalGlb && want) {
+      const busy = this.reloadT < 1 || this.switchT < 1 || this.ads > 0.05;
+      if (!busy && this.customInspectT < 0) {
+        this.customInspectT = 0;
+        this._customCatchPlayed = false;
       }
     }
   }
@@ -755,6 +799,8 @@ export class ViewModel {
     this.boltT = -0.25;
     this.awmInspectHeld = false;
     this.vandalInspectHeld = false;
+    this.customInspectHeld = false;
+    this.customInspectT = -1;
     if (this.useAwpGlb) this._playAwmClip('fire', 0.04, true);
     else if (this.useVandalGlb) this._playVandalClip('fire', 0.02, true);
   }
@@ -763,6 +809,8 @@ export class ViewModel {
     this.reloadDur = Math.max(0.01, dur);
     this.awmInspectHeld = false;
     this.vandalInspectHeld = false;
+    this.customInspectHeld = false;
+    this.customInspectT = -1;
     if (this.useAwpGlb) {
       if (dur > 0.1) {
         this._playAwmClip('reload', 0.08, true, dur);
@@ -900,19 +948,42 @@ export class ViewModel {
       this.vandal.rotation.set(recoilRx, (1 - ads) * 0.03, (1 - ads) * 0.02);
 
       if (this.vandalActive) {
-        if (s.ads > 0.05 && this.vandalActive.activeName === 'inspect') {
-          this.vandalInspectHeld = false;
-          this._playVandalClip('idle', 0.08, true);
+        if (s.ads > 0.05) {
+          if (this.vandalActive.activeName === 'inspect') {
+            this.vandalInspectHeld = false;
+            this._playVandalClip('idle', 0.08, true);
+          }
+          if (this.customInspectT >= 0) {
+            this.customInspectHeld = false;
+            this.customInspectT = -1;
+          }
         }
         if (this.vandalActive.loaded && this.vandalActive.mixer) {
           this.vandalActive.mixer.update(Math.min(dt, 0.05));
+          // Play subtle catch click on 2-handed toss-catch inspect (non-pistol, non-operator)
+          const isTwoHandedToss = this.gunDef && this.gunDef.slot === 'primary' && this.gunDef.id !== 'operator';
+          if (isTwoHandedToss && this.vandalActive.activeName === 'inspect' && this.vandalActive.activeAction) {
+            const ct = this.vandalActive.activeAction.time;
+            if (ct < 0.2) this._vandalCatchPlayed = false;
+            else if (!this._vandalCatchPlayed && ct >= 44 / 60) {
+              this._vandalCatchPlayed = true;
+              if (this.audio && this.audio.bolt) this.audio.bolt(0, 0.26, 1.18, true);
+            }
+          }
         }
+      }
+      if (this.gunDef && this.gunDef.slot === 'secondary') {
+        this._applyProceduralInspect(dt, { userData: { bodyGroup: this.vandalModelRoot, handsGroup: null } });
+      } else {
+        this.vandalModelRoot.position.set(0, 0, 0);
+        this.vandalModelRoot.rotation.set(0, 0, 0);
       }
 
       this.flashT += dt;
-      this.vandalFlash.visible = this.flashT < 0.04;
+      const silenced = this.gunDef && this.gunDef.silenced;
+      this.vandalFlash.visible = !silenced && this.flashT < 0.04;
       this.vandalFlash.material.rotation = Math.random() * 6;
-      this.vandalFlashLight.intensity = this.flashT < 0.05 ? 4.8 : 0;
+      this.vandalFlashLight.intensity = !silenced && this.flashT < 0.05 ? 4.8 : 0;
     } else if (this.shown === 1 && !this.useAwpGlb && !this.useVandalGlb) {
       const ads = easeOut(s.ads);
       const isPistol = this.gunDef && this.gunDef.slot === 'secondary';
@@ -934,6 +1005,12 @@ export class ViewModel {
         pz + recoilZ
       );
       this.customGun.rotation.set(recoilRx, (1 - ads) * 0.03, (1 - ads) * 0.02);
+
+      if (s.ads > 0.05 && this.customInspectT >= 0) {
+        this.customInspectHeld = false;
+        this.customInspectT = -1;
+      }
+      this._applyProceduralInspect(dt, this.activeCustomMesh);
 
       this.reloadT = Math.min(1, this.reloadT + dt / this.reloadDur);
       if (this.reloadT < 1) {
@@ -961,6 +1038,140 @@ export class ViewModel {
       this.butterfly.update(dt, s);
     }
   }
+
+  _applyProceduralInspect(dt, mesh) {
+    if (!mesh || !mesh.userData.bodyGroup) return;
+    const body = mesh.userData.bodyGroup;
+    const hands = mesh.userData.handsGroup;
+    if (this.customInspectT < 0) {
+      body.position.set(0, 0, 0);
+      body.rotation.set(0, 0, 0);
+      if (hands) { hands.position.set(0, 0, 0); hands.rotation.set(0, 0, 0); }
+      return;
+    }
+
+    const isPistol = this.gunDef && this.gunDef.slot === 'secondary';
+    const isOperator = this.gunDef && this.gunDef.id === 'operator';
+    const dur = isPistol ? 2.8 : isOperator ? 3.0 : 3.4;
+
+    this.customInspectT += dt;
+    if (this.customInspectT >= dur) {
+      if (this.customInspectHeld) {
+        this.customInspectT = 0;
+        this._customCatchPlayed = false;
+      } else {
+        this.customInspectT = -1;
+        body.position.set(0, 0, 0);
+        body.rotation.set(0, 0, 0);
+        if (hands) { hands.position.set(0, 0, 0); hands.rotation.set(0, 0, 0); }
+        return;
+      }
+    }
+
+    const t = this.customInspectT;
+    const sm = (a, b, x) => {
+      const k = clamp((x - a) / Math.max(1e-4, b - a), 0, 1);
+      return k * k * (3 - 2 * k);
+    };
+    const lerpK = (keys, time) => {
+      for (let i = 0; i < keys.length - 1; i++) {
+        const k0 = keys[i], k1 = keys[i + 1];
+        if (time >= k0[0] && time <= k1[0]) {
+          const u = sm(k0[0], k1[0], time);
+          return [
+            k0[1] + (k1[1] - k0[1]) * u,
+            k0[2] + (k1[2] - k0[2]) * u,
+            k0[3] + (k1[3] - k0[3]) * u,
+            k0[4] + (k1[4] - k0[4]) * u,
+            k0[5] + (k1[5] - k0[5]) * u,
+            k0[6] + (k1[6] - k0[6]) * u,
+          ];
+        }
+      }
+      return [0, 0, 0, 0, 0, 0];
+    };
+    const D = Math.PI / 180;
+
+    if (isPistol) {
+      // Pistol inspect (YXZ order so pitch lifts barrel cleanly before yaw turns side profile to camera):
+      // Phase 1: Rotate left with barrel angled diagonally UP toward sky (Side 1)
+      // Phase 2: Raise muzzle straight UP
+      // Phase 3: While muzzle points UP, twist pistol to face the opposite side directly at player (Side 2)
+      // Phase 4: Return to idle
+      body.rotation.order = 'YXZ';
+      const k = lerpK([
+        // [time, x, y, z, rxDeg (pitch up), ryDeg (yaw left+/right-), rzDeg (roll)]
+        [0.00,  0.000, 0.000,  0.000,  0,    0,   0],
+        [0.48, -0.042, 0.026, -0.024, 28,   70,  -8],
+        [1.02, -0.042, 0.028, -0.024, 30,   68,  -8],
+        [1.48, -0.006, 0.048, -0.020, 68,    6,   0],
+        [1.82,  0.008, 0.046, -0.022, 64,  -80,  12],
+        [2.34,  0.008, 0.044, -0.022, 62,  -78,  12],
+        [2.80,  0.000, 0.000,  0.000,  0,    0,   0],
+      ], t);
+      body.position.set(k[0], k[1], k[2]);
+      body.rotation.set(k[3] * D, k[4] * D, k[5] * D);
+      if (hands) {
+        hands.rotation.order = 'YXZ';
+        hands.position.copy(body.position);
+        hands.rotation.copy(body.rotation);
+      }
+    } else if (isOperator) {
+      // Operator Valorant Default: Classic sniper tilt left -> right (no toss)
+      const k = lerpK([
+        [0.00,  0.000, 0.000,  0.000,  0,   0,   0],
+        [0.75, -0.035, 0.018, -0.015,  8,  38,  22],
+        [1.50, -0.040, 0.020, -0.020, 10,  44,  26],
+        [2.25,  0.028, 0.012, -0.010,  6, -32, -20],
+        [3.00,  0.000, 0.000,  0.000,  0,   0,   0],
+      ], t);
+      body.position.set(k[0], k[1], k[2]);
+      body.rotation.set(k[3] * D, k[4] * D, k[5] * D);
+      if (hands) {
+        hands.position.copy(body.position);
+        hands.rotation.copy(body.rotation);
+      }
+    } else {
+      // Shared 2-handed Toss-Catch Flip Inspect:
+      // Toss HIGH & spin horizontal -> Catch & inspect Side 1 -> Vertical -> Tilt opposite (Side 2) -> Idle
+      if (!this._customCatchPlayed && t >= 0.72) {
+        this._customCatchPlayed = true;
+        if (this.audio && this.audio.bolt) this.audio.bolt(0, 0.26, 1.18, true);
+      }
+      const bk = lerpK([
+        [0.00,  0.000,  0.000,  0.000,  0,   0,   0],
+        [0.20,  0.000, -0.028,  0.010, -8,   4,   0],
+        [0.44, -0.030,  0.135, -0.030,  6,  52,   8],
+        [0.64, -0.050,  0.075, -0.040,  8,  90,   6],
+        [0.74, -0.050,  0.010, -0.040, 10,  88,   4],
+        [0.88, -0.050,  0.026, -0.045,  8,  88,   4],
+        [1.55, -0.040,  0.028, -0.045,  6,  86,   2],
+        [1.95,  0.000,  0.012, -0.010,  4,   0,   0],
+        [2.38,  0.035,  0.022, -0.025, 10, -48, -28],
+        [2.86,  0.032,  0.020, -0.025,  8, -45, -26],
+        [3.40,  0.000,  0.000,  0.000,  0,   0,   0],
+      ], t);
+      body.position.set(bk[0], bk[1], bk[2]);
+      body.rotation.set(bk[3] * D, bk[4] * D, bk[5] * D);
+      if (hands) {
+        const hk = lerpK([
+          [0.00,  0.000,  0.000,  0.000,  0,   0,   0],
+          [0.20,  0.000, -0.028,  0.000, -8,   4,   0],
+          [0.36,  0.000,  0.032, -0.015, 10,   6,   0],
+          [0.60, -0.020, -0.012, -0.010,  4,  15,   0],
+          [0.74, -0.020, -0.028, -0.010,  6,  16,   0],
+          [0.88, -0.020, -0.012, -0.015,  4,  16,   0],
+          [1.55, -0.020, -0.010, -0.015,  4,  16,   0],
+          [1.95,  0.000,  0.008,  0.000,  4,   0,   0],
+          [2.38,  0.020,  0.012, -0.010, 10, -32, -22],
+          [2.86,  0.018,  0.010, -0.010,  8, -30, -20],
+          [3.40,  0.000,  0.000,  0.000,  0,   0,   0],
+        ], t);
+        hands.position.set(hk[0], hk[1], hk[2]);
+        hands.rotation.set(hk[3] * D, hk[4] * D, hk[5] * D);
+      }
+    }
+  }
 }
 
 export function buildProceduralWeaponMesh(wDef) {
@@ -972,13 +1183,7 @@ export function buildProceduralWeaponMesh(wDef) {
     wDef,
     false
   );
-  // Strip any hand/sleeve boxes for clean weapon-only 3D showcase
-  for (let i = g.children.length - 1; i >= 0; i--) {
-    const ch = g.children[i];
-    if (ch.material === dummySleeve || ch.material === dummySkin) {
-      g.remove(ch);
-    }
-  }
+  if (g.userData.handsGroup) g.remove(g.userData.handsGroup);
   dummySleeve.dispose();
   dummySkin.dispose();
   return g;
