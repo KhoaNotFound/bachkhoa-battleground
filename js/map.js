@@ -29,7 +29,7 @@ export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}
   ]);
   onProgress?.(35);
   const mmImg = new Image();
-  mmImg.src = new URL('minimap.png?v=4', BASE).href;
+  mmImg.src = new URL('minimap.png?v=5', BASE).href;
   const mmReady = mmImg.decode().catch(() => null);
 
   [BOUNDS.x0, BOUNDS.z0, BOUNDS.x1, BOUNDS.z1] = meta.bbox;
