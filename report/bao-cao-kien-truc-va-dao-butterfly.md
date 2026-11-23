@@ -1,8 +1,8 @@
-# Báo Cáo Kiến Trúc Dự Án, AWP Dragon Lore, Dao Butterfly & Hiệu Ứng Kill Effect Valorant
+# Báo Cáo Kiến Trúc Dự Án, AWP Dragon Lore, Vandal 3D Skins, Kho Bộ Sưu Tập, Dao Butterfly & Hiệu Ứng Kill Effect Valorant
 
 **Dự án:** Bách Khoa Battleground  
 **Công nghệ cốt lõi:** HTML5, CSS3, Vanilla ES Modules, Three.js (`v0.164.1`), Blender 5.3 NLA Rigging (`THREE.AnimationMixer`), Canvas 2D Real-time Chroma Key, Web Audio API, WebSocket (`ws`) & MQTT (`mqtt`)  
-**Cập nhật lần cuối:** 21/11/2026
+**Cập nhật lần cuối:** 23/11/2026
 
 ---
 
@@ -10,17 +10,36 @@
 
 ```text
 bachkhoa-battleground/
-├── index.html                  # Giao diện gốc: importmap Three.js, màn hình Loading, Sảnh (Lobby), HUD, Kill Banner, Scope, Bảng điểm
-├── style.css                   # Toàn bộ giao diện UI/UX (glassmorphism), tâm ngắm, thanh máu, slot vũ khí, kill banner & icon SVG
+├── index.html                  # Giao diện gốc: importmap Three.js, Loading, Sảnh (Lobby + nút Bộ Sưu Tập), HUD, Buy Menu (B), Collection UI, Scope, Bảng điểm
+├── style.css                   # Toàn bộ giao diện UI/UX (glassmorphism), tâm ngắm, thanh máu, slot vũ khí, Buy Menu, Collection 2 tầng & xem trước 3D
 ├── README.md                   # Tài liệu giới thiệu game, phím điều khiển và kiến trúc mạng
 ├── server.json                 # Lưu URL Cloudflare Tunnel công khai của relay server (client tự đọc khi chơi online)
 ├── start-server.sh             # Script bash tự khởi chạy Node relay server + mở Cloudflare quick tunnel & cập nhật server.json
+├── .gitattributes              # Cấu hình chuẩn hóa line-ending / binary attributes trong Git
 ├── .gitignore                  # Bỏ qua file tạm/log/node_modules khi commit Git
 │
-├── assets/                     # Chứa tài nguyên 3D nhị phân glTF 2.0, âm thanh và video hiệu ứng hạ gục
+├── assets/                     # Chứa tài nguyên 3D nhị phân glTF 2.0, bản đồ nhị phân, âm thanh, ảnh và video hiệu ứng hạ gục
 │   ├── awp-dragon-lore.glb     # CS:GO AWP Dragon Lore (~4.31 MB): Armature 8 xương, tay hộp chữ nhật, 2 texture nhúng & 5 clip NLA (draw, idle, fire, reload, inspect)
 │   ├── butterfly-viewmodel.glb # Rig ViewModel dao Butterfly (~1.37 MB): Armature 23 xương, tay khối hộp chữ nhật & 6 clip NLA (draw, idle, slash_1, slash_2, heavy, inspect)
 │   ├── butterfly-knife.glb     # Mô hình 3D dao Valorant Champions Butterfly gốc (~594 KB) có 2 chốt bản lề SafePinPivot & BitePinPivot
+│   ├── karambit.glb            # Mô hình 3D dao Karambit (~35 KB) dự phòng cho kho cận chiến
+│   ├── skins/                  # Tài nguyên 3D & ảnh thumbnail cho hệ thống Bộ Sưu Tập (Collection)
+│   │   ├── vandal/             # 3 mô hình Vandal chuẩn hóa cùng tỷ lệ (0.76m), gắn VandalViewModelRig + 5 clip NLA (draw, idle, fire, reload, inspect)
+│   │   │   ├── vandal-default.glb   # Vandal mặc định (~10.2 MB): nhúng 4 texture PBR 2048px (DF, NM, MRS, AEM) từ VANDAL BASE.blend
+│   │   │   ├── vandal-forsaken.glb  # Forsaken Vandal (White) (~8.5 MB): nhúng texture trắng mạ vàng + tinh thể xanh ngọc
+│   │   │   └── vandal-rgx.glb       # RGX 11z Pro Vandal (~10.9 MB): khung vỏ trong suốt + dải LED phát sáng emission PBR
+│   │   └── thumbs/             # Ảnh thumbnail PNG nền trong suốt (512×256) render bằng Blender EEVEE (AgX)
+│   │       ├── vandal-default.png
+│   │       ├── vandal-forsaken.png
+│   │       ├── vandal-rgx.png
+│   │       ├── operator-default.png
+│   │       └── knife-butterfly.png
+│   ├── audio/
+│   │   └── awm.mp3             # Mẫu âm thanh phát bắn AWM chân thực (~113 KB)
+│   ├── img/
+│   │   └── logo-bk.png         # Biểu trưng Trường ĐH Bách Khoa TP.HCM
+│   ├── map/                    # Dữ liệu khuôn viên Bách Khoa bản chính (mesh nhị phân campus.bin, metadata campus.json, va chạm collision.bin, minimap.png)
+│   ├── map-review/             # Bản đồ thử nghiệm (?map=review) dựng lại chi tiết các tòa nhà cho phép đi vào các tầng (phòng chơi tách biệt)
 │   └── killfx/                 # 6 đoạn video hiệu ứng hạ gục liên tiếp Valorant (1080p 60fps + âm thanh stereo 48kHz)
 │       ├── kill_1.mp4          # Mạng 1 (1.65s · 99 frames, cắt từ 0.25s – 1.88s)
 │       ├── kill_2.mp4          # Mạng 2 liên tiếp (1.67s · 100 frames, cắt từ 1.90s – 3.55s)
@@ -30,25 +49,48 @@ bachkhoa-battleground/
 │       └── kill_6.mp4          # Mạng 6+ liên tiếp (6.90s · 414 frames, cắt từ 14.60s – 21.48s)
 │
 ├── js/                         # Toàn bộ mã nguồn client (ES Modules, không cần bước build)
-│   ├── main.js                 # Điểm khởi chạy chính: game loop, input, điều khiển nhân vật, hệ thống vũ khí đa dạng, /dummy, chuỗi killStreak & đồng bộ mạng
+│   ├── main.js                 # Điểm khởi chạy chính: game loop, input, chu kỳ ngày/đêm 10 phút, hệ thống vũ khí, Collection, /dummy, /unlock all, killStreak & đồng bộ mạng
 │   ├── weapons.js              # Danh mục 18 khẩu súng (Sidearms, SMGs, Shotguns, Rifles, Snipers, Machine Guns) + 2 cận chiến (Dao Butterfly / Nắm đấm) & icon SVG
+│   ├── skins.js                # Danh mục skin toàn bộ 20 vũ khí, lưu trạng thái sở hữu & trang bị trong localStorage (bkbg.skins), API unlockAllSkins / resetSkins
+│   ├── collection.js           # Giao diện Bộ Sưu Tập 2 tầng kiểu Valorant (View 1 lưới vũ khí, View 2 chi tiết skin + ổ khóa 🔒 + xem trước 3D xoay 360° trực tiếp)
 │   ├── shop.js                 # Bảng mua vũ khí kiểu Valorant (nhấn B): 5 cột vũ khí + bảng thông số chi tiết bên phải + tùy chọn dùng Dao hoặc Nắm đấm
 │   ├── butterfly.js            # Điều khiển dao Butterfly: nạp butterfly-viewmodel.glb qua THREE.AnimationMixer, vật lý 6-DOF Tầng 1 & clack audio đồng bộ frame
-│   ├── viewmodel.js            # Scene góc nhìn thứ nhất (FOV 62°), PMREM studio lighting, AWP Dragon Lore GLB, Dao Butterfly GLB & procedural ViewModel cho 17 loại súng mới
+│   ├── viewmodel.js            # Scene góc nhìn thứ nhất (FOV 62°), PMREM studio lighting, AWP Dragon Lore GLB, Vandal GLB đa skin (cache động), Dao Butterfly GLB & procedural ViewModel + export buildProceduralWeaponMesh
+│   ├── admin.js                # Xác thực khóa Admin (?admin=<key> hoặc /admin <key>) và chế độ camera bay tự do Inspector (nút ADMIN · INSPECT MAP)
+│   ├── chat.js                 # Khung chat toàn phòng (phím /), giới hạn tốc độ gửi tin (RateLimit) và xử lý các lệnh slash (/time, /tp, /dummy, /killfx, /unlock all...)
+│   ├── campus-data.js          # Dữ liệu hình học & tọa độ các khu vực, tòa nhà khuôn viên ĐH Bách Khoa
+│   ├── landmarks.js            # Điểm mốc định vị, biển chỉ dẫn và nhãn khu vực trong khuôn viên trường
 │   ├── physics.js              # Hệ va chạm AABB theo lưới 2D (CollisionWorld + 2D DDA raycast) & bộ di chuyển nhân vật (Mover)
-│   ├── map.js                  # Dựng khuôn viên 3D ĐH Bách Khoa TP.HCM (268 Lý Thường Kiệt) bằng procedural geometry merging
-│   ├── textures.js             # Sinh toàn bộ texture 2D bằng Canvas (mặt tiền, mái, sân bóng, sân bóng rổ, khuôn mặt, nametag, tia lửa)
+│   ├── map.js                  # Nạp bản đồ khuôn viên 3D ĐH Bách Khoa (tự chuyển giữa assets/map và assets/map-review theo tham số ?map=review)
+│   ├── textures.js             # Sinh toàn bộ texture 2D bằng Canvas (mặt tiền, mái, sân bóng, sân bóng rổ, khuôn mặt, nametag, chat bubble, tia lửa)
 │   ├── avatar.js               # Mô hình nhân vật góc nhìn thứ 3 (dùng AWP Dragon Lore clone + Butterfly 3rd-person), hitbox 3 vùng & hiệu ứng vỡ khối Debris
-│   ├── hud.js                  # Quản lý HUD: minimap xoay theo hướng nhìn, thanh máu, đạn, hitmarker, killfeed, kill banner (Chroma Key) & bảng điểm
+│   ├── hud.js                  # Quản lý HUD: minimap xoay theo hướng nhìn, bản đồ lớn (giữ M), thanh máu, đạn, hitmarker, killfeed, kill banner (Chroma Key) & bảng điểm
 │   ├── vfx.js                  # Hệ thống hạt (3000 hạt additive/normal), đường đạn tracer, chớp nòng, vết đạn decal, máu & vòng xung
-│   ├── audio.js                # Bộ tổng hợp âm thanh Web Audio API + hỗ trợ âm thanh 3D HRTF
+│   ├── audio.js                # Bộ tổng hợp âm thanh Web Audio API + phát mẫu awm.mp3 + hỗ trợ âm thanh 3D HRTF
 │   ├── net.js                  # Lớp mạng lai: ưu tiên WebSocket Relay Server và tự động fallback sang Public MQTT Broker
 │   └── util.js                 # Hàm toán học & tiện ích (clamp, lerp, damp, góc xoay, PRNG mulberry32, escapeHtml)
+│
+├── night/                      # Chế độ chơi phụ: "Ở lại trường vào buổi tối" (Co-op 2–5 người, nhiệm vụ ban đêm & voice chat WebRTC)
+│   ├── index.html              # Giao diện chế độ chơi ban đêm
+│   ├── night.css               # Style tối cho chế độ Co-op đêm
+│   ├── README.md               # Hướng dẫn vận hành chế độ night
+│   └── js/                     # Logic riêng (main.js, map.js, net.js, tasks-logic.js, tasks-ui.js, voice.js)
 │
 ├── server/                     # Backend nhẹ để relay dữ liệu multiplayer độ trễ thấp
 │   ├── server.js               # HTTP static server (hỗ trợ .glb, .mp4, .webm, .mp3) + WebSocket room relay + cầu nối 2 chiều sang MQTT broker
 │   ├── package.json            # Khai báo dependencies (ws, mqtt) và lệnh khởi chạy server
 │   └── package-lock.json       # Khóa phiên bản chính xác các gói npm của server
+│
+├── tools/                      # Bộ công cụ Python ngoại tuyến xây dựng bản đồ, va chạm và khóa Admin
+│   ├── build_campus.py         # Biên dịch dữ liệu OSM / khuôn viên thành campus.bin & minimap.png
+│   ├── build_obj_map.py        # Chuyển đổi các file .obj từ Blender sang định dạng bản đồ tối ưu (map-review)
+│   ├── voxel_collision.py      # Sinh lưới hộp va chạm AABB nhị phân (collision.bin) từ hình học 3D
+│   ├── extract_frames.py       # Hỗ trợ tách khung hình video hiệu ứng
+│   ├── admin_key.py            # Sinh và kiểm tra hash khóa Admin
+│   ├── landmarks.json          # Cấu hình tọa độ các địa điểm nổi bật trong trường
+│   └── osm-campus.json         # Dữ liệu bản đồ OpenStreetMap khu vực 268 Lý Thường Kiệt
+│
+├── vendor/                     # Thư viện cục bộ không phụ thuộc CDN (three.module.js, GLTFLoader.js, BufferGeometryUtils.js, mqtt.esm.js)
 │
 └── report/                     # Thư mục lưu trữ các báo cáo kỹ thuật & tài liệu phân tích dự án
     └── bao-cao-kien-truc-va-dao-butterfly.md  # Báo cáo hiện tại
@@ -199,15 +241,47 @@ Từ video hiệu ứng gốc (`1920×1080`, `60 FPS`, âm thanh stereo `48 kHz`
 
 ---
 
-### 3.5. Hướng Dẫn Debug, Slow-Motion & Kiểm Thử (`window.__game`)
+### 3.5. Hệ Thống Model Vandal 3D, Kho Bộ Sưu Tập (Collection) & Skin Khóa/Mở (`assets/skins/`, `js/skins.js`, `js/collection.js`, `js/viewmodel.js`)
+
+#### A. Chuẩn Hóa 3 Mô Hình Vandal PBR & Rig NLA 60 FPS
+Ba mô hình Vandal từ thư mục nguồn Blender (`VANDAL BASE.blend`, `Foresaken Vandal (White).glb`, `BUNDLE_RGX.glb`) được chuẩn hóa đồng bộ bằng Blender 5.3:
+- **Đồng bộ tỷ lệ & trục tọa độ**: Chiều dài `0.76m`, nòng hướng `+Y` (xuất glTF thành `-Z` giống AWP Dragon Lore), đỉnh tâm ngắm căn tại `Z = +0.062m`, nhúng đầy đủ texture PBR (Base Color, Normal, Metallic/Roughness, Emission).
+- **Armature `VandalViewModelRig` & 2 tay khối hộp**: Gồm `Root` → `GunBone` → {`MagBone`, `RightArmBone` → `RightHandBone`, `LeftArmBone` → `LeftHandBone`} với `SleeveMat` & `SkinMat` đồng bộ màu áo từ Lobby.
+- **5 Clip NLA (60 FPS)**: `idle` (`2.0s`), `draw` (`0.6s`), `fire` (`0.233s`), `reload` (`2.5s` tách băng đạn `MagBone` + nghiêng súng nạp đạn), `inspect` (`3.0s` xoay khoe 2 mặt súng khi nhấn `F`).
+- **Tích hợp `ViewModel` (`js/viewmodel.js`)**: Thay thế hoàn toàn mô hình hộp procedural cũ của `WEAPONS.vandal` (`modelType: 'vandal_glb'`), hỗ trợ cache đa skin (`this.vandalCache`) để chuyển đổi tức thì giữa `vandal-default.glb`, `vandal-forsaken.glb` và `vandal-rgx.glb`.
+
+#### B. Giao Diện Bộ Sưu Tập (Collection) & Xem Trước 3D Xoay 360°
+- **Nút mở ngoài nền Lobby**: Nút **`BỘ SƯU TẬP · SKINS`** (`#collectionBtn`) đặt nổi bật ở phía trên màn hình Lobby.
+- **Tầng 1 (Danh sách toàn bộ vũ khí)**: Lưới 4 cột theo đúng bố cục Valorant (`SIDEARMS`, `SMGS` + `SHOTGUNS`, `RIFLES` + `MELEE`, `SNIPER RIFLES` + `MACHINE GUNS`), hiển thị ảnh thumbnail của skin đang trang bị và bộ đếm skin (`1/3` trên Vandal).
+- **Tầng 2 (Chi tiết skin từng súng)**:
+  - **Cột trái**: Bộ lọc skin đã sở hữu, ô tìm kiếm theo tên và lưới các skin. **Mặc định chỉ mở khóa skin `Default`** (riêng mục **MELEE / Cận chiến** mặc định là **Nắm đấm**, còn **Dao Butterfly** bị khóa); mọi skin chưa sở hữu hiển thị làm mờ kèm **biểu tượng ổ khóa (🔒)** ngay trước ảnh skin.
+  - **Cột phải (`CollectionPreview3D`)**: Khung canvas Three.js riêng biệt với studio PMREM lighting cho phép **kéo chuột xoay 360° và cuộn zoom** trực tiếp model 3D sạch (tự ẩn tay khối hộp đối với file `.glb`, và tái sử dụng `buildProceduralWeaponMesh()` cho các súng procedural còn lại).
+- **Lưu trữ & Lệnh Admin**: Trạng thái sở hữu và trang bị lưu trong `localStorage['bkbg.skins']`. Hỗ trợ lệnh Admin trong chat `/unlock all` (mở khóa toàn bộ skin để test), `/unlock <id>` và `/lock all` (đặt lại chỉ còn Default).
+
+---
+
+### 3.6. Các Tính Năng Hỗ Trợ Khác (Ngày/Đêm, Chat, Admin Inspector, Bản Đồ Thử Nghiệm & Chế Độ Ban Đêm)
+- **Chu kỳ Ngày / Đêm (`js/main.js`)**: Đồng bộ theo đồng hồ thực (10 phút/vòng) với shader bầu trời sao/trăng/hoàng hôn; hỗ trợ lệnh Admin `/time set`, `/day`, `/noon`, `/sunset`, `/night`, `/sunrise`, `/auto`.
+- **Chat & Lệnh Admin (`js/chat.js`, `js/admin.js`)**: Mở chat bằng phím `/`, kích hoạt quyền Admin qua `?admin=<key>` hoặc `/admin <key>` để dùng camera bay tự do (`ADMIN · INSPECT MAP`), dịch chuyển `/tp`, chỉnh tốc độ `/speed`, `/heal`, `/god`, `/ammo`, `/unlock all`.
+- **Thử Map Mới (`?map=review`)**: Tải bản đồ từ `assets/map-review/` với các tòa nhà dựng chi tiết vào được từng tầng, tự động tách phòng multiplayer (`review-main`).
+- **Chế độ Co-op Ban Đêm (`night/`)**: Chế độ chơi 2–5 người hợp tác làm nhiệm vụ trong khuôn viên buổi tối kèm voice chat WebRTC.
+
+---
+
+### 3.7. Hướng Dẫn Debug, Slow-Motion & Kiểm Thử (`window.__game`)
 
 ```js
+// Kiểm tra Bộ Sưu Tập (Collection), Skin Vandal & lệnh mở khóa
+window.__game.collectionUI.setOpen(true);                   // Mở giao diện Bộ Sưu Tập (Collection)
+window.__game.unlockAllSkins();                             // Mở khóa toàn bộ skin (tương đương lệnh admin /unlock all)
+window.__game.resetSkins();                                 // Khóa lại toàn bộ skin (chỉ giữ Mặc định, tương đương /lock all)
+
 // Vào trận & kiểm tra Bảng mua vũ khí (B), /dummy và Kill Streak 1 -> 6
 window.__game.spawn();
 window.__game.toggleBuyMenu(true);                        // Mở bảng mua vũ khí (hoặc ấn phím B)
 window.__game.spawnDummy(6);                              // Spawn 6 dummy tập bắn phía trước (hoặc gõ /dummy 6)
 window.__game.triggerKillStreak(5);                       // Thử hiệu ứng Mạng 5 / ACE (kill_5.mp4)
-// Hoặc mở khung chat trong trận (phím /) và gõ: /dummy · /dummy 6 · /dummy clear · /killfx [1..6|reset]
+// Hoặc mở khung chat trong trận (phím /) và gõ: /dummy · /killfx [1..6|reset] · /admin dev · /unlock all · /lock all
 
 // Kiểm tra AWP Dragon Lore (slot 2)
 window.__game.vm.setInspect(true);                        // Bắt đầu anim inspect 3.5s trên AWP Dragon Lore

@@ -11,6 +11,8 @@ import { Inspector, loadAdminKey, verifyAdminKey } from './admin.js';
 import { Chat, RateLimit, cleanChat } from './chat.js';
 import { WEAPONS, getWeapon } from './weapons.js';
 import { BuyMenu } from './shop.js';
+import { CollectionUI } from './collection.js';
+import { getEquippedSkin, isSkinOwned, equipSkin, unlockAllSkins, unlockSkin, resetSkins } from './skins.js';
 import { clamp, damp, lerp, lerpAngle, angleDiff, cleanName, escapeHtml, r2, r3 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -205,7 +207,7 @@ function updateDayNight() {
 // ---------------- systems ----------------
 const world = new CollisionWorld(8);
 const mover = new Mover(world);
-let map, hud, vm, vfx, debris, buyMenu;
+let map, hud, vm, vfx, debris, buyMenu, collectionUI;
 const audio = new Audio();
 audio.setVolume(settings.vol);
 // the review map gets its own rooms, so its players never mix with the ones on the live map
@@ -229,6 +231,11 @@ function makeInitialAmmoMap() {
   return m;
 }
 
+function resolveEquippedMelee() {
+  const skin = getEquippedSkin('knife');
+  return skin && skin.meleeType === 'knife' ? 'knife' : 'fist';
+}
+
 // ---------------- local player ----------------
 const me = {
   name: '', color: settings.color, alive: false, hp: MAX_HP, kills: 0, deaths: 0, killStreak: 0,
@@ -238,7 +245,7 @@ const me = {
   loadout: {
     primary: settings.primary && WEAPONS[settings.primary]?.slot === 'primary' ? settings.primary : 'operator',
     secondary: settings.secondary && WEAPONS[settings.secondary]?.slot === 'secondary' ? settings.secondary : 'classic',
-    melee: settings.melee === 'fist' ? 'fist' : 'knife',
+    melee: resolveEquippedMelee(),
   },
   ammoMap: makeInitialAmmoMap(),
   nextFire: 0, reloadEnd: 0, reloadStart: 0, reloadDurMs: AWM.reload, switchUntil: 0, ads: 0, protectedUntil: 0,
@@ -295,7 +302,12 @@ function equipFromShop(w) {
     saveSettings();
     switchWeapon(2, true);
   } else if (w.slot === 'melee') {
-    me.loadout.melee = w.id === 'fist' ? 'fist' : 'knife';
+    if (w.id === 'knife' && !isSkinOwned('knife', 'knife_butterfly')) {
+      chat?.system('[Bộ Sưu Tập] Dao Butterfly đang bị khóa! Mở khóa trong Bộ Sưu Tập (hoặc dùng /unlock all).');
+      return;
+    }
+    equipSkin('knife', w.id === 'knife' ? 'knife_butterfly' : 'knife_default');
+    me.loadout.melee = w.id === 'knife' ? 'knife' : 'fist';
     settings.melee = me.loadout.melee;
     saveSettings();
     switchWeapon(3, true);
@@ -337,7 +349,24 @@ const feed = [];
     });
     vm = new ViewModel(renderer, audio);
     vm.setColor(me.color);
-    vm.setGunDef(getWeapon(me.loadout.primary));
+    const bootPrimary = getWeapon(me.loadout.primary);
+    vm.setGunDef(bootPrimary, getEquippedSkin(bootPrimary.id));
+    collectionUI = new CollectionUI({
+      onSound: () => audio.ui(),
+      onEquipSkin: (weaponId, skinDef) => {
+        if (weaponId === 'knife') {
+          me.loadout.melee = skinDef?.meleeType === 'knife' ? 'knife' : 'fist';
+          settings.melee = me.loadout.melee;
+          saveSettings();
+          if (me.slot === 3 && me.alive) switchWeapon(3, true);
+          else syncHudLoadout();
+          return;
+        }
+        if (vm && vm.gunDef && vm.gunDef.id === weaponId) {
+          vm.setGunDef(vm.gunDef, skinDef);
+        }
+      },
+    });
     vfx = new VFX(scene);
     vfx.setScale(window.innerHeight);
     debris = new Debris(scene);
@@ -414,7 +443,9 @@ function setupLobby() {
   const low = $('lowGfx');
   low.checked = settings.low;
   low.onchange = () => { settings.low = low.checked; saveSettings(); location.reload(); };
-  $('playBtn').onclick = () => { if (!net.connected) return; audio.init(); audio.ui(); spawn(); };
+  $('playBtn').onclick = () => { if (!net.connected) return; collectionUI?.setOpen(false); audio.init(); audio.ui(); spawn(); };
+  const colBtn = $('collectionBtn');
+  if (colBtn) colBtn.onclick = () => { audio.init(); audio.ui(); collectionUI?.setOpen(true); };
   $('resumeBtn').onclick = () => { lockPointer(); };
   // admin: free camera to inspect the map (name + key, see admin.js)
   inspector = new Inspector({
@@ -523,6 +554,7 @@ function handleChatCommand(rawText) {
     chat?.system('=== LỆNH ADMIN (BÁCH KHOA BATTLEGROUND) ===');
     chat?.system('• /dummy [1..10|clear] : Spawn mục tiêu tập bắn phía trước (bắn hạ để test Kill Effect)');
     chat?.system('• /killfx [1..6|reset] : Kích hoạt hoặc reset chuỗi hiệu ứng hạ gục Valorant (1 -> 6+)');
+    chat?.system('• /unlock all | /unlock <id> | /lock all : Mở khóa hoặc khóa lại toàn bộ skin trong Bộ Sưu Tập');
     chat?.system('• /time set <day|noon|sunset|night|sunrise|midnight|auto|0..24h> : Đổi buổi sáng/trưa/chiều/tối');
     chat?.system('• /day, /noon, /sunset, /night, /sunrise : Phím tắt đổi nhanh thời gian');
     chat?.system('• /fly hoặc /inspect : Bật/tắt camera bay tự do (Inspector)');
@@ -535,6 +567,35 @@ function handleChatCommand(rawText) {
   if (!isAdmin()) {
     chat?.system('[Admin] Bạn cần quyền Admin để dùng lệnh này. (Dùng ?admin=<key> hoặc /admin <key>)');
     return true;
+  }
+
+  if (cmd === 'unlock') {
+    const target = args.join(' ').trim().toLowerCase();
+    if (!target || target === 'all' || target === '*') {
+      const n = unlockAllSkins();
+      chat?.system(`[Admin] Đã mở khóa toàn bộ skin trong Bộ Sưu Tập${n ? ` (+${n} skin mới)` : ' (tất cả đã được mở từ trước)'}!`);
+      return true;
+    }
+    const found = unlockSkin(target);
+    if (found) chat?.system(`[Admin] Đã mở khóa skin: ${found.name}.`);
+    else chat?.system(`[Admin] Không tìm thấy skin "${target}". Dùng /unlock all để mở tất cả.`);
+    return true;
+  }
+
+  if (cmd === 'lock') {
+    const target = (args[0] || 'all').toLowerCase();
+    if (target === 'all' || target === 'reset') {
+      resetSkins();
+      me.loadout.melee = resolveEquippedMelee();
+      settings.melee = me.loadout.melee;
+      saveSettings();
+      const curW = activeWeaponDef();
+      if (me.slot === 3 && me.alive) switchWeapon(3, true);
+      else if (vm && curW && activeVmSlot() === 1) vm.setGunDef(curW, getEquippedSkin(curW.id));
+      syncHudLoadout();
+      chat?.system('[Admin] Đã khóa lại toàn bộ skin chưa sở hữu (chỉ giữ skin Mặc định).');
+      return true;
+    }
   }
 
   // /day, /night, /noon, /sunrise, /sunset, /midnight, /auto shortcuts
@@ -806,7 +867,7 @@ function spawn() {
   me.protectedUntil = performance.now() + 2500;
   me.switchUntil = 0; me.lastDamage = 0; me.recoil = 0;
   const startGun = getWeapon(me.loadout.primary);
-  vm.setGunDef(startGun);
+  vm.setGunDef(startGun, getEquippedSkin(startGun.id));
   vm.setWeapon(1, true); vm.switchT = 0;
   state = 'playing';
   net.send({ t: 'spawn', p: [r2(me.pos.x), r2(me.pos.y), r2(me.pos.z)] });
@@ -955,7 +1016,7 @@ function switchWeapon(slot, force = false) {
   me.reloadEnd = 0;
   adsHeld = false;
   vm.reload(0.0001); vm.reloadT = 1;
-  if (vmSlot === 1) vm.setGunDef(w);
+  if (vmSlot === 1) vm.setGunDef(w, getEquippedSkin(w.id));
   vm.setWeapon(vmSlot, force);
   syncHudLoadout();
   hud.setReload(-1);
@@ -1597,4 +1658,4 @@ function frame() {
 }
 
 // test hooks
-window.__game = { audio, get hud() { return hud; }, get chat() { return chat; }, get buyMenu() { return buyMenu; }, get inspector() { return inspector; }, me, peers, dummies, net, world, camera, keys, spawn, tryFire, switchWeapon, setTimeOfDay, handleChatCommand, triggerKillStreak, spawnDummy, clearDummies, toggleBuyMenu, equipFromShop, WEAPONS, get forcedPhase() { return forcedPhase; }, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
+window.__game = { audio, get hud() { return hud; }, get chat() { return chat; }, get buyMenu() { return buyMenu; }, get collectionUI() { return collectionUI; }, get inspector() { return inspector; }, me, peers, dummies, net, world, camera, keys, spawn, tryFire, switchWeapon, setTimeOfDay, handleChatCommand, triggerKillStreak, spawnDummy, clearDummies, toggleBuyMenu, equipFromShop, unlockAllSkins, unlockSkin, resetSkins, getEquippedSkin, WEAPONS, get forcedPhase() { return forcedPhase; }, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };

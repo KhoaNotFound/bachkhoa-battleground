@@ -133,7 +133,33 @@ export class ViewModel {
     this.customGunCache = new Map();
     this.activeCustomMesh = null;
     this.gunDef = null;
+    this.skinDef = null;
     this.useAwpGlb = true;
+    this.useVandalGlb = false;
+
+    // ---- Vandal GLB ViewModel (supports switching skins dynamically) ----
+    this.vandal = new THREE.Group();
+    this.vandal.visible = false;
+    this.root.add(this.vandal);
+    this.vandalModelRoot = new THREE.Group();
+    this.vandal.add(this.vandalModelRoot);
+    this.vandalCache = new Map();
+    this.vandalActive = null;
+    this.vandalUrl = null;
+    this.vandalInspectHeld = false;
+    this.vandalDrawTriggered = false;
+    this.vandalFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: TX.flashStar(), color: 0xffe0a0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+    this.vandalFlash.scale.setScalar(0.14);
+    this.vandalFlash.position.set(0, 0.015, -0.53);
+    this.vandalFlash.visible = false;
+    this.vandal.add(this.vandalFlash);
+    this.vandalFlashLight = new THREE.PointLight(0xffc070, 0, 3);
+    this.vandalFlashLight.position.set(0, 0.02, -0.42);
+    this.vandal.add(this.vandalFlashLight);
+    this.vandalHipPos = new THREE.Vector3(0.115, -0.112, -0.40);
+    this.vandalAdsPos = new THREE.Vector3(0, -0.052, -0.25);
+    this._vandalPos = new THREE.Vector3();
+
     this.customFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: TX.flashStar(), color: 0xffe0a0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
     this.customFlash.scale.setScalar(0.14);
     this.customFlash.visible = false;
@@ -329,9 +355,153 @@ export class ViewModel {
   setColor(c) {
     this.sleeveMat.color.set(c);
     if (this._awmSleeveMat) this._awmSleeveMat.color.set(c);
+    for (const entry of this.vandalCache.values()) {
+      for (const sm of entry.sleeveMats) sm.color.set(c);
+    }
   }
 
-  _buildCustomGun(w) {
+  _tuneVandalMaterial(mat, entry) {
+    if (!mat || !mat.isMeshStandardMaterial) return;
+    if (mat.name === 'SleeveMat') {
+      entry.sleeveMats.push(mat);
+      mat.envMapIntensity = 0.85;
+      mat.color.copy(this.sleeveMat.color);
+    } else if (mat.name === 'SkinMat') {
+      mat.envMapIntensity = 0.8;
+      mat.color.copy(this.skinMat.color);
+    } else {
+      mat.envMapIntensity = Math.max(mat.envMapIntensity || 1.0, 1.25);
+    }
+    mat.needsUpdate = true;
+  }
+
+  _loadOrActivateVandalGLB(url) {
+    const targetUrl = url || 'assets/skins/vandal/vandal-default.glb';
+    this.vandalUrl = targetUrl;
+
+    for (const [k, ent] of this.vandalCache.entries()) {
+      if (ent.root) ent.root.visible = (k === targetUrl);
+    }
+
+    let entry = this.vandalCache.get(targetUrl);
+    if (entry) {
+      this.vandalActive = entry;
+      if (entry.loaded) {
+        this._playVandalClip(entry.pendingClip || 'idle', 0.05, false, entry.pendingDur || 0);
+      }
+      return;
+    }
+
+    entry = {
+      url: targetUrl,
+      root: null,
+      mixer: null,
+      actions: Object.create(null),
+      sleeveMats: [],
+      activeAction: null,
+      activeName: 'idle',
+      pendingClip: 'draw',
+      pendingDur: 0,
+      loaded: false,
+    };
+    this.vandalCache.set(targetUrl, entry);
+    this.vandalActive = entry;
+
+    const loader = new GLTFLoader();
+    loader.load(
+      targetUrl,
+      (gltf) => {
+        const root = gltf.scene;
+        root.traverse((o) => {
+          if (o.isMesh) {
+            o.frustumCulled = false;
+            o.castShadow = false;
+            o.receiveShadow = false;
+            if (Array.isArray(o.material)) {
+              for (let i = 0; i < o.material.length; i++) this._tuneVandalMaterial(o.material[i], entry);
+            } else {
+              this._tuneVandalMaterial(o.material, entry);
+            }
+          }
+        });
+
+        root.visible = (this.vandalUrl === targetUrl);
+        this.vandalModelRoot.add(root);
+        entry.root = root;
+        entry.mixer = new THREE.AnimationMixer(root);
+
+        for (const name of AWP_CLIPS) {
+          const clip = THREE.AnimationClip.findByName(gltf.animations, name);
+          if (!clip) continue;
+          const action = entry.mixer.clipAction(clip);
+          if (name === 'idle') {
+            action.setLoop(THREE.LoopRepeat, Infinity);
+          } else {
+            action.setLoop(THREE.LoopOnce, 1);
+            action.clampWhenFinished = true;
+          }
+          entry.actions[name] = action;
+        }
+
+        entry.mixer.addEventListener('finished', (e) => {
+          if (e.action === entry.activeAction && e.action !== entry.actions.idle) {
+            if (e.action === entry.actions.inspect) {
+              this._playVandalClip(this.vandalInspectHeld ? 'inspect' : 'idle', this.vandalInspectHeld ? 0.06 : 0.15, true, 0, entry);
+            } else {
+              this._playVandalClip('idle', 0.08, true, 0, entry);
+            }
+          }
+        });
+
+        entry.loaded = true;
+        const startClip = entry.pendingClip && entry.actions[entry.pendingClip] ? entry.pendingClip : 'idle';
+        this._playVandalClip(startClip, 0, true, entry.pendingDur, entry);
+      },
+      undefined,
+      (err) => {
+        console.warn(`Could not load Vandal GLB (${targetUrl}):`, err);
+      }
+    );
+  }
+
+  _playVandalClip(name, fadeSec = 0.06, forceRestart = true, targetDur = 0, targetEntry = null) {
+    const entry = targetEntry || this.vandalActive;
+    if (!entry) return;
+    if (!entry.mixer || !entry.actions[name]) {
+      entry.pendingClip = name;
+      entry.pendingDur = targetDur;
+      entry.activeName = name;
+      return;
+    }
+
+    const next = entry.actions[name];
+    const prev = entry.activeAction;
+    if (prev === next && !forceRestart) return;
+
+    const clipDur = next.getClip().duration || 1;
+    const ts = targetDur > 0.1 ? clipDur / targetDur : 1;
+
+    next.enabled = true;
+    next.reset();
+    next.setEffectiveTimeScale(ts);
+    next.setEffectiveWeight(1);
+
+    if (prev && prev !== next && fadeSec > 0) {
+      prev.enabled = true;
+      next.play();
+      prev.crossFadeTo(next, fadeSec, false);
+    } else {
+      for (const k in entry.actions) {
+        if (entry.actions[k] !== next) entry.actions[k].stop();
+      }
+      next.play();
+    }
+
+    entry.activeAction = next;
+    entry.activeName = name;
+  }
+
+  _buildCustomGun(w, includeHands = true) {
     const g = new THREE.Group();
     const bodyMat = new THREE.MeshStandardMaterial({ color: w.color || 0x2f353d, roughness: 0.45, metalness: 0.45 });
     const darkMat = new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.55, metalness: 0.5 });
@@ -488,10 +658,12 @@ export class ViewModel {
       // Magazine
       magMesh = addBox(0.032, isDmr ? 0.11 : 0.16, 0.052, 0, -0.095, isBullpup ? 0.14 : -0.10, accentMat, isBullpup ? 0.1 : -0.22);
       // Blocky hands
-      addBox(0.084, 0.084, 0.32, 0.058, -0.10, 0.24, this.sleeveMat, 0.32, -0.12);
-      addBox(0.074, 0.074, 0.085, 0.022, -0.055, 0.07, this.skinMat);
-      addBox(0.084, 0.084, 0.34, -0.085, -0.11, -0.05, this.sleeveMat, 0.22, 0.48);
-      addBox(0.074, 0.074, 0.085, -0.02, -0.052, -0.22, this.skinMat);
+      if (includeHands) {
+        addBox(0.084, 0.084, 0.32, 0.058, -0.10, 0.24, this.sleeveMat, 0.32, -0.12);
+        addBox(0.074, 0.074, 0.085, 0.022, -0.055, 0.07, this.skinMat);
+        addBox(0.084, 0.084, 0.34, -0.085, -0.11, -0.05, this.sleeveMat, 0.22, 0.48);
+        addBox(0.074, 0.074, 0.085, -0.02, -0.052, -0.22, this.skinMat);
+      }
     }
 
     g.userData.muzzleZ = muzzleZ;
@@ -500,16 +672,23 @@ export class ViewModel {
     return g;
   }
 
-  setGunDef(wDef) {
+  setGunDef(wDef, skinDef = null) {
     if (!wDef) return;
     const prevId = this.gunDef ? this.gunDef.id : null;
+    const prevSkinId = this.skinDef ? this.skinDef.id : null;
     this.gunDef = wDef;
+    this.skinDef = skinDef;
     this.useAwpGlb = wDef.modelType === 'awp_glb';
-    if (!this.useAwpGlb) {
+    this.useVandalGlb = wDef.modelType === 'vandal_glb';
+
+    if (this.useVandalGlb) {
+      const glbUrl = skinDef?.glb || 'assets/skins/vandal/vandal-default.glb';
+      this._loadOrActivateVandalGLB(glbUrl);
+    } else if (!this.useAwpGlb) {
       if (this.activeCustomMesh) this.activeCustomMesh.visible = false;
       let mesh = this.customGunCache.get(wDef.id);
       if (!mesh) {
-        mesh = this._buildCustomGun(wDef);
+        mesh = this._buildCustomGun(wDef, true);
         this.customGunCache.set(wDef.id, mesh);
         this.customGun.add(mesh);
       }
@@ -517,9 +696,11 @@ export class ViewModel {
       this.activeCustomMesh = mesh;
       this.customFlash.position.set(0, 0.02, (mesh.userData.muzzleZ || -0.45) - 0.04);
     }
-    if (prevId !== wDef.id && this.weapon === 1) {
+    const changed = prevId !== wDef.id || (skinDef && prevSkinId !== skinDef.id);
+    if (changed && this.weapon === 1) {
       this.switchT = 0;
       this.awmDrawTriggered = false;
+      this.vandalDrawTriggered = false;
       this.reloadT = 1;
     }
   }
@@ -529,11 +710,16 @@ export class ViewModel {
       this.weapon = w;
       this.switchT = 0;
       this.awmDrawTriggered = false;
+      this.vandalDrawTriggered = false;
       this.knifeDrawTriggered = false;
       this.awmInspectHeld = false;
+      this.vandalInspectHeld = false;
       if (w !== 2) this.butterfly.setInspect(false);
       if (w !== 1 && (this.awmActiveName === 'reload' || this.awmActiveName === 'inspect')) {
         this._playAwmClip('idle', 0.05, true);
+      }
+      if (w !== 1 && this.vandalActive && (this.vandalActive.activeName === 'reload' || this.vandalActive.activeName === 'inspect')) {
+        this._playVandalClip('idle', 0.05, true);
       }
     }
   }
@@ -543,6 +729,7 @@ export class ViewModel {
   setInspect(held) {
     const want = !!held;
     this.awmInspectHeld = want;
+    this.vandalInspectHeld = want;
     if (this.weapon === 2) {
       this.butterfly.setInspect(want);
     } else if (this.weapon === 1 && this.useAwpGlb && want) {
@@ -554,6 +741,12 @@ export class ViewModel {
       if (!busy && (this.awmActiveName === 'idle' || this.awmActiveName === 'inspect')) {
         this._playAwmClip('inspect', 0.12, false);
       }
+    } else if (this.weapon === 1 && this.useVandalGlb && want && this.vandalActive) {
+      const an = this.vandalActive.activeName;
+      const busy = an === 'fire' || an === 'reload' || an === 'draw' || this.ads > 0.05;
+      if (!busy && (an === 'idle' || an === 'inspect')) {
+        this._playVandalClip('inspect', 0.12, false);
+      }
     }
   }
   fire() {
@@ -561,17 +754,26 @@ export class ViewModel {
     this.flashT = 0;
     this.boltT = -0.25;
     this.awmInspectHeld = false;
+    this.vandalInspectHeld = false;
     if (this.useAwpGlb) this._playAwmClip('fire', 0.04, true);
+    else if (this.useVandalGlb) this._playVandalClip('fire', 0.02, true);
   }
   reload(dur) {
     this.reloadT = 0;
     this.reloadDur = Math.max(0.01, dur);
     this.awmInspectHeld = false;
+    this.vandalInspectHeld = false;
     if (this.useAwpGlb) {
       if (dur > 0.1) {
         this._playAwmClip('reload', 0.08, true, dur);
       } else if (this.awmActiveName === 'reload') {
         this._playAwmClip('idle', 0.05, true);
+      }
+    } else if (this.useVandalGlb && this.vandalActive) {
+      if (dur > 0.1) {
+        this._playVandalClip('reload', 0.08, true, dur);
+      } else if (this.vandalActive.activeName === 'reload') {
+        this._playVandalClip('idle', 0.05, true);
       }
     }
   }
@@ -591,6 +793,10 @@ export class ViewModel {
         this.awmDrawTriggered = true;
         this._playAwmClip('draw', 0.06, true);
       }
+      if (this.shown === 1 && this.useVandalGlb && (!this.vandalDrawTriggered || prevShown !== 1)) {
+        this.vandalDrawTriggered = true;
+        this._playVandalClip('draw', 0.06, true);
+      }
     }
     const sw = this.switchT < 0.45 ? easeOut(this.switchT / 0.45) : 1 - easeOut((this.switchT - 0.45) / 0.55);
     const lower = this.switchT < 1 ? sw * 0.35 : 0;
@@ -605,11 +811,15 @@ export class ViewModel {
     this.recoil = damp(this.recoil, 0, 12, dt);
 
     if (this._awmSleeveMat) this._awmSleeveMat.color.copy(this.sleeveMat.color);
+    if (this.vandalActive) {
+      for (const sm of this.vandalActive.sleeveMats) sm.color.copy(this.sleeveMat.color);
+    }
 
     const hideForScope = this.gunDef && this.gunDef.scope && s.ads > 0.92;
     this.fists.visible = this.shown === 0;
     this.awm.visible = this.shown === 1 && this.useAwpGlb && !hideForScope;
-    this.customGun.visible = this.shown === 1 && !this.useAwpGlb && !hideForScope;
+    this.vandal.visible = this.shown === 1 && this.useVandalGlb && !hideForScope;
+    this.customGun.visible = this.shown === 1 && !this.useAwpGlb && !this.useVandalGlb && !hideForScope;
     this.butterfly.group.visible = this.shown === 2;
 
     if (this.shown === 0) {
@@ -675,7 +885,35 @@ export class ViewModel {
       this.flash.visible = this.flashT < 0.05;
       this.flash.material.rotation = Math.random() * 6;
       this.flashLight.intensity = this.flashT < 0.06 ? 6 : 0;
-    } else if (this.shown === 1 && !this.useAwpGlb) {
+    } else if (this.shown === 1 && this.useVandalGlb) {
+      const ads = easeOut(s.ads);
+      this._vandalPos.lerpVectors(this.vandalHipPos, this.vandalAdsPos, ads);
+      const bm = 1 - ads * 0.85;
+      const recoilZ = this.recoil * 0.036;
+      const recoilY = this.recoil * 0.009;
+      const recoilRx = this.recoil * 0.055;
+      this.vandal.position.set(
+        this._vandalPos.x + (bobX + this.swayX) * bm,
+        this._vandalPos.y + (bobY + this.swayY) * bm - lower + recoilY,
+        this._vandalPos.z + recoilZ
+      );
+      this.vandal.rotation.set(recoilRx, (1 - ads) * 0.03, (1 - ads) * 0.02);
+
+      if (this.vandalActive) {
+        if (s.ads > 0.05 && this.vandalActive.activeName === 'inspect') {
+          this.vandalInspectHeld = false;
+          this._playVandalClip('idle', 0.08, true);
+        }
+        if (this.vandalActive.loaded && this.vandalActive.mixer) {
+          this.vandalActive.mixer.update(Math.min(dt, 0.05));
+        }
+      }
+
+      this.flashT += dt;
+      this.vandalFlash.visible = this.flashT < 0.04;
+      this.vandalFlash.material.rotation = Math.random() * 6;
+      this.vandalFlashLight.intensity = this.flashT < 0.05 ? 4.8 : 0;
+    } else if (this.shown === 1 && !this.useAwpGlb && !this.useVandalGlb) {
       const ads = easeOut(s.ads);
       const isPistol = this.gunDef && this.gunDef.slot === 'secondary';
       const hx = isPistol ? 0.13 : 0.14;
@@ -723,4 +961,25 @@ export class ViewModel {
       this.butterfly.update(dt, s);
     }
   }
+}
+
+export function buildProceduralWeaponMesh(wDef) {
+  if (!wDef) return new THREE.Group();
+  const dummySleeve = new THREE.MeshBasicMaterial();
+  const dummySkin = new THREE.MeshBasicMaterial();
+  const g = ViewModel.prototype._buildCustomGun.call(
+    { sleeveMat: dummySleeve, skinMat: dummySkin },
+    wDef,
+    false
+  );
+  // Strip any hand/sleeve boxes for clean weapon-only 3D showcase
+  for (let i = g.children.length - 1; i >= 0; i--) {
+    const ch = g.children[i];
+    if (ch.material === dummySleeve || ch.material === dummySkin) {
+      g.remove(ch);
+    }
+  }
+  dummySleeve.dispose();
+  dummySkin.dispose();
+  return g;
 }
