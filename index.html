@@ -34,6 +34,15 @@
 
 <!-- ============ LOBBY ============ -->
 <div id="lobby" class="screen hidden">
+  <div class="lobby-top-actions">
+    <button id="collectionBtn" type="button" class="collection-btn">
+      <span class="col-btn-ico">◈</span>
+      <span class="col-btn-text">
+        <b>BỘ SƯU TẬP · SKINS</b>
+        <small>Đổi skin vũ khí &amp; xem 3D</small>
+      </span>
+    </button>
+  </div>
   <div class="lobby-grid">
     <section class="panel main-panel">
       <div class="brand">
@@ -182,6 +191,60 @@
       <div id="buyGrid" class="bm-grid"></div>
       <aside id="buyStats" class="bm-stats"></aside>
     </div>
+  </div>
+</div>
+
+<!-- ============ COLLECTION / SKINS SCREEN ============ -->
+<div id="collectionScreen" class="screen col-screen hidden">
+  <div class="col-bg"></div>
+  <div class="col-shell">
+    <header class="col-topbar">
+      <button id="colBackBtn" type="button" class="col-back-btn">← QUAY LẠI</button>
+      <div id="colBreadcrumb" class="col-breadcrumb">COLLECTION // KHO VŨ KHÍ</div>
+      <div id="colTotalBadge" class="col-total-badge">0 / 0 SKINS ĐÃ SỞ HỮU</div>
+      <button id="colCloseBtn" type="button" class="bm-close" title="Đóng (Esc)">✕</button>
+    </header>
+
+    <!-- View 1: All Weapons Arsenal (Image 1) -->
+    <section id="colArsenalView" class="col-arsenal-view">
+      <div id="colArsenalGrid" class="col-arsenal-grid"></div>
+    </section>
+
+    <!-- View 2: Weapon Skins Detail + 3D 360° Preview (Image 2) -->
+    <section id="colDetailView" class="col-detail-view hidden">
+      <div class="col-left">
+        <div class="col-toolbar">
+          <button id="colFilterBtn" type="button" class="col-filter-btn" title="Lọc skin đã sở hữu">≡</button>
+          <div class="col-search-wrap">
+            <span class="col-search-ico">⌕</span>
+            <input id="colSearchInput" type="text" placeholder="TÌM KIẾM SKIN..." autocomplete="off" spellcheck="false">
+          </div>
+          <span id="colSkinCounter" class="col-skin-counter">1 / 1</span>
+        </div>
+        <div id="colSkinGrid" class="col-skin-grid"></div>
+      </div>
+
+      <div class="col-right">
+        <div class="col-skin-header">
+          <span id="colTierSymbol" class="col-tier-symbol">▽</span>
+          <h2 id="colSkinTitle" class="col-skin-title">VANDAL</h2>
+        </div>
+        <div id="colSkinSub" class="col-skin-sub">MẶC ĐỊNH</div>
+
+        <div class="col-stage">
+          <canvas id="colPreviewCanvas" class="col-preview-canvas"></canvas>
+          <div class="col-stage-hint">Kéo chuột xoay 360° · Cuộn để phóng to / thu nhỏ</div>
+        </div>
+
+        <p id="colSkinDesc" class="col-skin-desc"></p>
+
+        <div class="col-actions">
+          <button id="colEquipBtn" type="button" class="col-equip-btn">
+            <span>TRANG BỊ SKIN</span>
+          </button>
+        </div>
+      </div>
+    </section>
   </div>
 </div>
 

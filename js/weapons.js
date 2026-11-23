@@ -177,9 +177,9 @@ export const WEAPONS = {
     reloadSec: 2.5, mag: 25, pellets: 1, range: 700,
     dmg: { head: 160, body: 40, legs: 34 },
     adsFov: 56, scope: false, silenced: false, recoilKick: 0.025,
-    modelType: 'rifle', color: 0x2c3035, accent: 0xff7043,
+    modelType: 'vandal_glb', color: 0x2c3035, accent: 0xff7043,
     altTitle: 'ALT FIRE · AIM DOWN SIGHTS (1.25×)',
-    altBullets: ['1 viên Headshot 160 sát thương ở mọi khoảng cách', 'Hỏa lực ổn định 40 sát thương mỗi viên vào thân', 'Zoom 1.25× giảm độ tản đạn và giật'],
+    altBullets: ['Mô hình 3D Vandal chuẩn PBR (ấn F soi súng · đổi skin ngoài Bộ Sưu Tập)', '1 viên Headshot 160 sát thương ở mọi khoảng cách', 'Hỏa lực ổn định 40 sát thương mỗi viên vào thân'],
   },
 
   // ---------------- SNIPER RIFLES ----------------
