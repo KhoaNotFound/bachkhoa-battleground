@@ -24,15 +24,20 @@ bachkhoa-battleground/
 │   ├── butterfly-knife.glb     # Mô hình 3D dao Valorant Champions Butterfly gốc (~594 KB) có 2 chốt bản lề SafePinPivot & BitePinPivot
 │   ├── karambit.glb            # Mô hình 3D dao Karambit (~35 KB) dự phòng cho kho cận chiến
 │   ├── skins/                  # Tài nguyên 3D & ảnh thumbnail cho hệ thống Bộ Sưu Tập (Collection)
-│   │   ├── vandal/             # 3 mô hình Vandal chuẩn hóa cùng tỷ lệ (0.76m), gắn VandalViewModelRig + 5 clip NLA (draw, idle, fire, reload, inspect)
-│   │   │   ├── vandal-default.glb   # Vandal mặc định (~10.2 MB): nhúng 4 texture PBR 2048px (DF, NM, MRS, AEM) từ VANDAL BASE.blend
+│   │   ├── cs2/                # 5 mô hình CS2 HD làm bản Default CS2 (gắn rig tay khối hộp + 5 clip NLA 60 FPS)
+│   │   │   ├── m4a1s-cs2.glb   # M4A1-S (CS2 Default cho Phantom, ~30.9 MB) — Inspect hất-xoay-hứng
+│   │   │   ├── ak47-cs2.glb    # AK-47 (CS2 Default cho Vandal) — Inspect hất-xoay-hứng
+│   │   │   ├── deagle-cs2.glb  # Desert Eagle (CS2 Default cho Sheriff) — Inspect xoay trái -> ngẩng nòng -> xoay phải
+│   │   │   ├── usps-cs2.glb    # USP-S (CS2 Default cho Classic) — Inspect xoay trái -> ngẩng nòng -> xoay phải
+│   │   │   └── awp-cs2.glb     # AWP (CS2 Default cho Operator) — Inspect súng ngắm riêng
+│   │   ├── vandal/             # 3 mô hình Vandal chuẩn hóa cùng tỷ lệ (0.76m), gắn rig tay độc lập + Inspect hất-xoay-hứng
+│   │   │   ├── vandal-default.glb   # Vandal mặc định Valorant (~10.2 MB): nhúng 4 texture PBR 2048px (DF, NM, MRS, AEM)
 │   │   │   ├── vandal-forsaken.glb  # Forsaken Vandal (White) (~8.5 MB): nhúng texture trắng mạ vàng + tinh thể xanh ngọc
-│   │   │   └── vandal-rgx.glb       # RGX 11z Pro Vandal (~10.9 MB): khung vỏ trong suốt + dải LED phát sáng emission PBR
-│   │   └── thumbs/             # Ảnh thumbnail PNG nền trong suốt (512×256) render bằng Blender EEVEE (AgX)
-│   │       ├── vandal-default.png
-│   │       ├── vandal-forsaken.png
-│   │       ├── vandal-rgx.png
-│   │       ├── operator-default.png
+│   │   │   └── vandal-rgx.glb       # RGX 11z Pro Vandal (~11.0 MB): khung vỏ trong suốt + dải LED phát sáng emission PBR
+│   │   └── thumbs/             # Ảnh thumbnail PNG nền trong suốt (512×256)
+│   │       ├── vandal-default.png · vandal-cs2.png · vandal-forsaken.png · vandal-rgx.png
+│   │       ├── phantom-cs2.png · sheriff-cs2.png · classic-cs2.png
+│   │       ├── operator-cs2.png · operator-default.png
 │   │       └── knife-butterfly.png
 │   ├── audio/
 │   │   └── awm.mp3             # Mẫu âm thanh phát bắn AWM chân thực (~113 KB)
@@ -243,12 +248,23 @@ Từ video hiệu ứng gốc (`1920×1080`, `60 FPS`, âm thanh stereo `48 kHz`
 
 ### 3.5. Hệ Thống Model Vandal 3D, Kho Bộ Sưu Tập (Collection) & Skin Khóa/Mở (`assets/skins/`, `js/skins.js`, `js/collection.js`, `js/viewmodel.js`)
 
-#### A. Chuẩn Hóa 3 Mô Hình Vandal PBR & Rig NLA 60 FPS
-Ba mô hình Vandal từ thư mục nguồn Blender (`VANDAL BASE.blend`, `Foresaken Vandal (White).glb`, `BUNDLE_RGX.glb`) được chuẩn hóa đồng bộ bằng Blender 5.3:
-- **Đồng bộ tỷ lệ & trục tọa độ**: Chiều dài `0.76m`, nòng hướng `+Y` (xuất glTF thành `-Z` giống AWP Dragon Lore), đỉnh tâm ngắm căn tại `Z = +0.062m`, nhúng đầy đủ texture PBR (Base Color, Normal, Metallic/Roughness, Emission).
-- **Armature `VandalViewModelRig` & 2 tay khối hộp**: Gồm `Root` → `GunBone` → {`MagBone`, `RightArmBone` → `RightHandBone`, `LeftArmBone` → `LeftHandBone`} với `SleeveMat` & `SkinMat` đồng bộ màu áo từ Lobby.
-- **5 Clip NLA (60 FPS)**: `idle` (`2.0s`), `draw` (`0.6s`), `fire` (`0.233s`), `reload` (`2.5s` tách băng đạn `MagBone` + nghiêng súng nạp đạn), `inspect` (`3.0s` xoay khoe 2 mặt súng khi nhấn `F`).
-- **Tích hợp `ViewModel` (`js/viewmodel.js`)**: Thay thế hoàn toàn mô hình hộp procedural cũ của `WEAPONS.vandal` (`modelType: 'vandal_glb'`), hỗ trợ cache đa skin (`this.vandalCache`) để chuyển đổi tức thì giữa `vandal-default.glb`, `vandal-forsaken.glb` và `vandal-rgx.glb`.
+#### A. Bộ 2 Skin Default (CS2 & Valorant) & Hệ Thống Hoạt Ảnh Inspect Chung (`F`)
+- **2 skin Default mở sẵn (CS2 + Valorant)**:
+  - **Vandal**: `VANDAL (Valorant Default)` + `AK-47 (CS2 Default)` (kèm 2 skin khóa 🔒: `Forsaken Vandal`, `RGX 11z Pro Vandal`).
+  - **Phantom**: `M4A1-S (CS2 Default)` + `PHANTOM (Valorant Default)`.
+  - **Sheriff**: `DESERT EAGLE (CS2 Default)` + `SHERIFF (Valorant Default)`.
+  - **Classic**: `USP-S (CS2 Default)` + `CLASSIC (Valorant Default)`.
+  - **Operator**: `AWP (CS2 Default)` + `OPERATOR (Valorant Default)` (kèm skin khóa 🔒: `AWP Dragon Lore`).
+  - **Melee**: `NẮM ĐẤM (Mặc định)` (kèm skin khóa 🔒: `Dao Butterfly Champions`).
+- **Hoạt ảnh Inspect chung cho tất cả súng cầm 2 tay trừ `Operator` (`3.4s`, cả GLB lẫn procedural)**:
+  1. Hất súng lên cao (`+0.135m`) và xoay nằm ngang `90°` trên không trung (hai tay tách độc lập khỏi `GunBone` để thực hiện động tác hất & đón).
+  2. Hứng súng bằng hai tay (có độ nhún bắt súng + âm thanh click cơ khí `audio.bolt`) để ngắm rõ mặt bên thứ nhất.
+  3. Cầm súng dựng dọc trở lại trục ngắm, sau đó nghiêng xoay sang phía đối diện để nhìn trọn mặt bên còn lại rồi thu về `idle`.
+- **Hoạt ảnh Inspect chung cho tất cả súng lục (`2.8s`, cả `USP-S`, `Desert Eagle` lẫn súng lục procedural)**:
+  1. Xoay tay sang bên trái với góc nhìn ngang súng hướng xéo lên trời (`pitch +30°`, `yaw +70°` theo thứ tự `YXZ`).
+  2. Đưa mũi súng chĩa thẳng lên phía trên (`pitch +68°`).
+  3. Giữ mũi súng chĩa lên trên và xoay cổ tay (`yaw -80°`) để quay mặt bên còn lại của súng về phía góc nhìn nhân vật, rồi thu mượt về thế `idle`.
+- **Tích hợp `ViewModel` (`js/viewmodel.js`)**: Thống nhất cơ chế nạp động mọi skin có `.glb` (`this.vandalCache`) và tự động chuyển về procedural `customGun` khi người chơi chọn bản `Valorant Default` chưa có `.glb`.
 
 #### B. Giao Diện Bộ Sưu Tập (Collection) & Xem Trước 3D Xoay 360°
 - **Nút mở ngoài nền Lobby**: Nút **`BỘ SƯU TẬP · SKINS`** (`#collectionBtn`) đặt nổi bật ở phía trên màn hình Lobby.
@@ -261,7 +277,7 @@ Ba mô hình Vandal từ thư mục nguồn Blender (`VANDAL BASE.blend`, `Fores
 ---
 
 ### 3.6. Các Tính Năng Hỗ Trợ Khác (Ngày/Đêm, Chat, Admin Inspector, Bản Đồ Thử Nghiệm & Chế Độ Ban Đêm)
-- **Chu kỳ Ngày / Đêm (`js/main.js`)**: Đồng bộ theo đồng hồ thực (10 phút/vòng) với shader bầu trời sao/trăng/hoàng hôn; hỗ trợ lệnh Admin `/time set`, `/day`, `/noon`, `/sunset`, `/night`, `/sunrise`, `/auto`.
+- **Chu kỳ Ngày / Đêm (`js/main.js`)**: Chế độ bắn nhau mặc định khóa ở ban ngày sáng rõ (`phase = 0.16 · 09:50`, tắt tự động chuyển tối); vẫn có thể bật buổi tối hoặc chu kỳ tự động bằng lệnh Admin `/night`, `/sunset`, `/sunrise`, `/time set`, `/auto` hoặc tham số `?daytime=`.
 - **Chat & Lệnh Admin (`js/chat.js`, `js/admin.js`)**: Mở chat bằng phím `/`, kích hoạt quyền Admin qua `?admin=<key>` hoặc `/admin <key>` để dùng camera bay tự do (`ADMIN · INSPECT MAP`), dịch chuyển `/tp`, chỉnh tốc độ `/speed`, `/heal`, `/god`, `/ammo`, `/unlock all`.
 - **Thử Map Mới (`?map=review`)**: Tải bản đồ từ `assets/map-review/` với các tòa nhà dựng chi tiết vào được từng tầng, tự động tách phòng multiplayer (`review-main`).
 - **Chế độ Co-op Ban Đêm (`night/`)**: Chế độ chơi 2–5 người hợp tác làm nhiệm vụ trong khuôn viên buổi tối kèm voice chat WebRTC.

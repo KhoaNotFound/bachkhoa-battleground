@@ -212,9 +212,9 @@ export const WEAPONS = {
     reloadSec: 2.8, mag: 5, pellets: 1, range: 1500,
     dmg: { head: 250, body: 150, legs: 120 },
     adsFov: 13, scope: true, silenced: false, recoilKick: 0.055,
-    modelType: 'awp_glb', color: 0xc9a227, accent: 0xffd54f,
+    modelType: 'sniper', color: 0x3b4838, accent: 0xc9a227,
     altTitle: 'ALT FIRE · DUAL SCOPE (5.0×)',
-    altBullets: ['Mô hình 3D CS:GO AWP Dragon Lore (ấn F soi súng)', 'Zoom 5.0× · 1 phát hạ gục mọi vùng cơ thể', 'Độ xuyên tối đa, tầm bắn 1500m toàn khuôn viên'],
+    altBullets: ['Hỗ trợ 2 bản Default (AWP CS2 & Operator Valorant) + skin AWP Dragon Lore', 'Zoom 5.0× · 1 phát hạ gục mọi vùng cơ thể', 'Độ xuyên tối đa, tầm bắn 1500m toàn khuôn viên'],
   },
 
   // ---------------- MACHINE GUNS ----------------
