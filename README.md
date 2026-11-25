@@ -56,3 +56,12 @@ tools/.venv/bin/python tools/build_obj_map.py "<folder with model_N.obj>"
 ```
 
 `tools/extract_frames.py` extracts frames from a campus video (PyAV) for photogrammetry / depth experiments.
+
+## Gun feel: recoil and weight (`js/gunfeel.js`)
+
+* **Recoil (PUBG style):** every bullet kicks the real aim up and sideways; the climb ramps up over the first bullets
+  and does not return by itself – pull the mouse down to control the spray. The sideways pattern is deterministic per gun.
+  ADS −20 %, crouch −15 %, moving +10 %, airborne +40 %. Bloom (random cone) grows during a spray and is added to the base spread.
+  Per-gun tuning lives in `GUN_FEEL` (e.g. Phantom ≈ 14° climb over 30 bullets, Vandal ≈ 20°, Odin ≈ 24°).
+* **Weight:** each gun has a mass in kg, move speed ×`1.15 − 0.05·kg` (clamped 0.7–1.2): pistols ~×1.1, SMGs ~×1.03,
+  rifles ~×0.96, snipers ×0.81–0.89 (Operator 6.8 kg = ×0.81), Ares ×0.80, Odin 9.5 kg = ×0.70. Heavier guns are slower in ADS too.

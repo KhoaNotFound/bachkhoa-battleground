@@ -10,6 +10,9 @@ import { HUD } from './hud.js';
 import { Inspector, loadAdminKey, verifyAdminKey } from './admin.js';
 import { Chat, RateLimit, cleanChat } from './chat.js';
 import { WEAPONS, getWeapon } from './weapons.js';
+import { Recoil, speedMult as weightSpeedMult, adsSpeedMult as weightAdsMult, GUN_FEEL } from './gunfeel.js';
+const recoil = new Recoil();
+const fireCdMs = (w) => (w.id === 'operator' ? AWM.cd : Math.round(1000 / Math.max(0.5, w.fireRate || 1)));
 import { BuyMenu } from './shop.js';
 import { CollectionUI } from './collection.js';
 import { getEquippedSkin, isSkinOwned, equipSkin, unlockAllSkins, unlockSkin, resetSkins } from './skins.js';
@@ -877,7 +880,7 @@ function spawn() {
   me.hp = MAX_HP; me.slot = 1; me.lastSlot = 3; me.reloadEnd = 0; me.nextFire = 0; me.ads = 0;
   me.alive = true; me.killStreak = 0; me.crouching = false; me.crouchV = 0; me.sprint = false; me.jumpImpulse = 0; me.landImpulse = 0;
   me.protectedUntil = performance.now() + 2500;
-  me.switchUntil = 0; me.lastDamage = 0; me.recoil = 0;
+  me.switchUntil = 0; me.lastDamage = 0; me.recoil = 0; recoil.reset();
   const startGun = getWeapon(me.loadout.primary);
   vm.setGunDef(startGun, getEquippedSkin(startGun.id));
   vm.setWeapon(1, true); vm.switchT = 0;
@@ -1026,6 +1029,7 @@ function switchWeapon(slot, force = false) {
   me.weapon = vmSlot;
   me.switchUntil = performance.now() + Math.min(600, Math.round((w.equipSec || 0.55) * 450));
   me.reloadEnd = 0;
+  recoil.reset();
   adsHeld = false;
   vm.reload(0.0001); vm.reloadT = 1;
   if (vmSlot === 1) vm.setGunDef(w, getEquippedSkin(w.id));
@@ -1124,7 +1128,7 @@ function tryFire(heavy = false) {
   else curAmmo = w.mag;
   me.ammoMap[w.id] = curAmmo;
   me.ammo = curAmmo;
-  const cdMs = w.id === 'operator' ? AWM.cd : Math.round(1000 / Math.max(0.5, w.fireRate));
+  const cdMs = fireCdMs(w);
   me.nextFire = now + cdMs;
 
   const hs = Math.hypot(me.vel.x, me.vel.z);
@@ -1134,6 +1138,7 @@ function tryFire(heavy = false) {
   spread += (hs / 6) * (scoped ? 0.01 : 0.022);
   if (!me.onGround) spread += 0.055;
   if (me.crouching) spread *= 0.6;
+  if (!scoped) spread += recoil.bloom; // bloom from the spray so far (before this bullet's kick)
   if (w.pellets > 1) spread = w.pelletSpread || 0.075;
 
   _o.copy(camera.position);
@@ -1196,7 +1201,9 @@ function tryFire(heavy = false) {
     net.send({ t: 'f', w: 1, o: [r2(muzzle.x), r2(muzzle.y), r2(muzzle.z)], e: [r2(lastEnd.x), r2(lastEnd.y), r2(lastEnd.z)], h: anyHit ? 1 : 0, n: !anyHit && lastWall ? lastWall.normal : undefined, m: !anyHit && lastWall ? lastWall.mat : undefined });
   }
   const rk = w.recoilKick || 0.025;
-  me.recoil = Math.min(0.14, me.recoil + rk * (me.ads > 0.5 ? 0.72 : 1));
+  // real PUBG-style kick (stays until the player pulls down) + a small visual-only punch
+  recoil.kick(w, cdMs, { ads: me.ads, crouch: me.crouching, moving: hs > 1.5, air: !me.onGround }, now);
+  me.recoil = Math.min(0.1, me.recoil + rk * 0.5 * (me.ads > 0.5 ? 0.72 : 1));
   me.shake = Math.max(me.shake, Math.min(0.65, rk * 11));
   vm.fire();
   audio.gunshot(w, null);
@@ -1419,6 +1426,7 @@ function updatePlayer(dt, now) {
   const k = 0.0022 * settings.sens * zoom;
   me.yaw -= mouseDX * k;
   me.pitch = clamp(me.pitch - mouseDY * k, -1.52, 1.52);
+  recoil.compensate(mouseDY * k); // pulling down cancels stored recoil climb
   lookDX = mouseDX; lookDY = mouseDY;
   mouseDX = mouseDY = 0;
 
@@ -1444,10 +1452,10 @@ function updatePlayer(dt, now) {
   const sprint = keys.ShiftLeft && fz < 0 && !me.crouching && me.ads < 0.3;
   me.sprint = !!sprint;
   const curW = activeWeaponDef();
-  const wSpeedFactor = curW ? clamp((curW.runSpeed || 5.4) / 5.4, 0.85, 1.18) : 1;
+  const wSpeedFactor = curW ? weightSpeedMult(curW) : 1; // carry weight (gunfeel.js)
   let speed = (me.crouching ? 2.8 : sprint ? 8.2 : 5.4) * (me.speedMult || 1);
   if (!me.crouching) speed *= wSpeedFactor;
-  if (me.ads > 0.5) speed *= curW.scope ? 0.55 : 0.78;
+  if (me.ads > 0.5) speed *= weightAdsMult(curW);
   const accel = me.onGround ? 14 : 2.5;
   const tx = (fx || fz) ? wx * speed : 0, tz = (fx || fz) ? wz * speed : 0;
   me.vel.x = damp(me.vel.x, tx, accel, dt);
@@ -1483,6 +1491,12 @@ function updatePlayer(dt, now) {
   me.ads = clamp(me.ads + (canAds ? dt * 6 : -dt * 8), 0, 1);
   if (firing && !buyMenu?.open && (curW.slot === 'melee' || curW.auto)) tryFire(false);
 
+  if (me.alive) { // recoil kick moves the real aim
+    const rr = recoil.update(curW.slot === 'melee' ? null : curW, fireCdMs(curW), dt, now);
+    me.pitch = clamp(me.pitch + rr.dPitch, -1.52, 1.52);
+    me.yaw += rr.dYaw;
+  }
+
   // regen
   if (me.hp < MAX_HP && now - me.lastDamage > 7000) { me.hp = Math.min(MAX_HP, me.hp + 8 * dt); hud.setHP(me.hp); }
 
@@ -1502,7 +1516,7 @@ function updatePlayer(dt, now) {
   // HUD
   const protectedNow = now < me.protectedUntil;
   hud.protect(protectedNow);
-  let spreadPx = curW.slot !== 'melee' ? (4 + (curW.spreadHip || 0.3) * 8) + hs * 2.4 + (me.onGround ? 0 : 18) : 0;
+  let spreadPx = curW.slot !== 'melee' ? (4 + (curW.spreadHip || 0.3) * 8) + hs * 2.4 + (me.onGround ? 0 : 18) + recoil.bloom * 300 : 0;
   if (me.crouching) spreadPx *= 0.6;
   if (me.ads > 0.4) spreadPx *= 0.5;
   hud.setSpread(spreadPx);
