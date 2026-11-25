@@ -47,6 +47,30 @@ function loadAwpTemplate() {
   return cachedAwpTemplate;
 }
 
+// Procedural assault rifle / SMG. kind: 3 UMP45, 4 M416, 5 AKM. Barrel points to -Z, same frame as buildAwmMesh.
+const RIFLE_LOOK = {
+  3: { body: 0x2a2c2e, wood: 0x2a2c2e, len: 0.5, barrel: 0.2, mag: 0.14 },
+  4: { body: 0x303336, wood: 0x303336, len: 0.62, barrel: 0.3, mag: 0.16 },
+  5: { body: 0x2b2b29, wood: 0x7a4a24, len: 0.64, barrel: 0.34, mag: 0.2 },
+};
+export function buildRifleMesh(kind = 4, scale = 1) {
+  const L = RIFLE_LOOK[kind] || RIFLE_LOOK[4];
+  const g = new THREE.Group();
+  const dark = new THREE.MeshLambertMaterial({ color: L.body });
+  const wood = new THREE.MeshLambertMaterial({ color: L.wood });
+  const add = (geo, mat, x, y, z, rx = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.x = rx; m.castShadow = true; g.add(m); return m; };
+  add(bgeo(0.055, 0.075, 0.3), dark, 0, 0, 0);                              // receiver
+  add(bgeo(0.05, 0.08, 0.26), wood, 0, -0.03, 0.27);                         // stock
+  add(bgeo(0.05, 0.05, L.len * 0.5), wood, 0, -0.012, -0.15 - L.len * 0.25); // handguard
+  add(new THREE.CylinderGeometry(0.012, 0.013, L.barrel, 8), dark, 0, 0.012, -0.3 - L.len * 0.5 - L.barrel * 0.5, Math.PI / 2);
+  add(bgeo(0.045, L.mag, 0.07), dark, 0, -0.07 - L.mag * 0.4, -0.06, kind === 5 ? 0.35 : 0.05); // magazine
+  add(bgeo(0.04, 0.09, 0.05), dark, 0, -0.08, 0.1, 0.25);                    // grip
+  add(bgeo(0.02, 0.03, 0.1), dark, 0, 0.055, -0.02);                         // sight rail
+  g.scale.setScalar(scale);
+  g.userData.muzzleZ = -0.3 - L.len * 0.5 - L.barrel;
+  return g;
+}
+
 export function buildAwmMesh(scale = 1, loadGlb = true) {
   const g = new THREE.Group();
   const add = (geo, mat, x, y, z, rx = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.x = rx; m.castShadow = true; g.add(m); return m; };
@@ -111,6 +135,12 @@ export class Avatar {
     this.gun.position.set(0.14, -0.05, -0.32);
     this.aim.add(this.gun);
     this.muzzle = new THREE.Object3D(); this.muzzle.position.set(0, 0.012, -1.22); this.gun.add(this.muzzle);
+    this.rifles = {};
+    for (const k of [3, 4, 5]) {
+      const r = buildRifleMesh(k, 1);
+      r.position.set(0.14, -0.05, -0.32); r.visible = false;
+      this.aim.add(r); this.rifles[k] = r;
+    }
 
     // 3rd-person butterfly knife held in right hand (arms[1])
     this.knife = buildThirdPersonButterfly();
@@ -199,15 +229,18 @@ export class Avatar {
     this.punchT = Math.min(1, this.punchT + dt * 3.2);
 
     const [aL, aR] = this.arms;
-    if (this.weapon === 1) {
-      this.gun.visible = true;
+    if (this.weapon === 1 || this.weapon >= 3) {
+      this.gun.visible = this.weapon === 1;
+      for (const k in this.rifles) this.rifles[k].visible = +k === this.weapon;
+      const held = this.weapon === 1 ? this.gun : this.rifles[this.weapon];
       this.knife.visible = false;
       const p = this.pitch - cr * 0.15;
       aR.rotation.set(Math.PI / 2 + p - 0.15 + this.recoil * 0.25, 0, 0.15);
       aL.rotation.set(Math.PI / 2 + p + 0.05 + this.recoil * 0.25, 0, -0.55);
-      this.gun.position.z = -0.32 + this.recoil * 0.08;
+      held.position.z = -0.32 + this.recoil * (this.weapon === 1 ? 0.08 : 0.04);
     } else if (this.weapon === 2) {
       this.gun.visible = false;
+      for (const k in this.rifles) this.rifles[k].visible = false;
       this.knife.visible = true;
       const pk = Math.sin(Math.min(1, this.punchT) * Math.PI);
       const guard = 1.05 + this.pitch * 0.55;
@@ -215,6 +248,7 @@ export class Avatar {
       aL.rotation.set(0.45 - sw * 0.45, 0, -0.12);
     } else {
       this.gun.visible = false;
+      for (const k in this.rifles) this.rifles[k].visible = false;
       this.knife.visible = false;
       const pk = Math.sin(Math.min(1, this.punchT) * Math.PI);
       const guard = 1.25 + this.pitch * 0.5;

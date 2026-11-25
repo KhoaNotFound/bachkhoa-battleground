@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { buildAwmMesh } from './avatar.js';
+import { buildAwmMesh, buildRifleMesh } from './avatar.js';
 import { ButterflyController } from './butterfly.js';
 import { damp, clamp } from './util.js';
 import * as TX from './textures.js';
@@ -121,6 +121,23 @@ export class ViewModel {
     this.flashLight = new THREE.PointLight(0xffc070, 0, 3);
     this.flashLight.position.set(0, 0.02, -0.4);
     this.awm.add(this.flashLight);
+
+    // ---- automatic rifles (weapons 3 UMP45, 4 M416, 5 AKM): procedural models ----
+    this.rifles = {};
+    this.rifleRoot = new THREE.Group();
+    this.root.add(this.rifleRoot);
+    for (const k of [3, 4, 5]) {
+      const r = buildRifleMesh(k, 1.15);
+      r.rotation.y = 0; r.visible = false;
+      this.rifleRoot.add(r); this.rifles[k] = r;
+    }
+    this.rifleKick = 0;
+    this.rifleFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: TX.flashStar(), color: 0xffe0a0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+    this.rifleFlash.scale.setScalar(0.13);
+    this.rifleFlash.visible = false;
+    this.rifleRoot.add(this.rifleFlash);
+    this.rifleFlashT = 1;
+    this.rifleAdsPos = new THREE.Vector3(0, -0.075, -0.3);
 
     // ---- Butterfly Knife (weapon 2) ----
     this.butterfly = new ButterflyController(this.sleeveMat, skin, audio);
@@ -347,7 +364,8 @@ export class ViewModel {
       }
     }
   }
-  fire() {
+  fire(w = 1) {
+    if (w >= 3) { this.rifleKick = Math.min(1.5, this.rifleKick + 0.7); this.rifleFlashT = 0; return; }
     this.recoil = 1;
     this.flashT = 0;
     this.boltT = -0.25;
@@ -397,6 +415,8 @@ export class ViewModel {
 
     this.fists.visible = this.shown === 0;
     this.awm.visible = this.shown === 1 && s.ads < 0.92;
+    this.rifleRoot.visible = this.shown >= 3;
+    for (const k in this.rifles) this.rifles[k].visible = +k === this.shown;
     this.butterfly.group.visible = this.shown === 2;
 
     if (this.shown === 0) {
@@ -462,6 +482,23 @@ export class ViewModel {
       this.flash.visible = this.flashT < 0.05;
       this.flash.material.rotation = Math.random() * 6;
       this.flashLight.intensity = this.flashT < 0.06 ? 6 : 0;
+    } else if (this.shown >= 3) {
+      const ads = easeOut(s.ads);
+      this._awmPos.lerpVectors(this.hipPos, this.rifleAdsPos, ads);
+      const bm = 1 - ads * 0.85;
+      this.rifleKick = damp(this.rifleKick, 0, 14, dt);
+      const kz = this.rifleKick * 0.03, kr = this.rifleKick * 0.06;
+      this.rifleRoot.position.set(
+        this._awmPos.x + (bobX + this.swayX) * bm,
+        this._awmPos.y + (bobY + this.swayY) * bm - lower + this.rifleKick * 0.008,
+        this._awmPos.z + kz
+      );
+      this.rifleRoot.rotation.set(kr, (1 - ads) * 0.03, (1 - ads) * 0.02);
+      const mz = this.rifles[this.shown].userData.muzzleZ * 1.15;
+      this.rifleFlash.position.set(0, 0.012, mz - 0.03);
+      this.rifleFlashT += dt;
+      this.rifleFlash.visible = this.rifleFlashT < 0.04;
+      this.rifleFlash.material.rotation = Math.random() * 6;
     } else if (this.shown === 2) {
       const hideDrop = this.weapon !== 2 && this.switchT < 0.45 ? easeOut(this.switchT / 0.45) * 0.3 : 0;
       this.butterfly.group.position.y = -hideDrop;

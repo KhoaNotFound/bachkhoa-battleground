@@ -113,6 +113,19 @@ export class Audio {
     // tail into reverb
     this.noise(o.rev, t + 0.02, 0.9, { type: 'lowpass', f0: 1400, f1: 120, gain: 0.9 });
   }
+  // automatic rifles / SMG (slot 3 UMP45, 4 M416, 5 AKM): short synthesized shot, deeper for heavier guns
+  rifle(pos, slot = 4) {
+    if (!this.ctx) return;
+    const o = this.out(pos, 14, 0.7);
+    const t = this.ctx.currentTime + o.delay;
+    const far = Math.min(1, o.dist / 200);
+    const k = slot === 5 ? 1 : slot === 4 ? 0.85 : 0.65; // weight of the report
+    const pitch = 1 + (Math.random() - 0.5) * 0.08;
+    this.noise(o.node, t, 0.05, { type: 'highpass', f0: (3200 - far * 2000) * pitch, f1: 1200, gain: 1.1 * (1 - far * 0.5) });
+    this.noise(o.node, t, 0.16 + k * 0.1, { type: 'lowpass', f0: (2600 - far * 2000) * pitch, f1: 200, gain: 1.1 * k + 0.3, q: 0.7 });
+    this.tone(o.node, t, 0.12, { f0: 150 * (0.7 + k * 0.4), f1: 55, gain: 0.8 * k });
+    this.noise(o.rev, t + 0.01, 0.4, { type: 'lowpass', f0: 1200, f1: 150, gain: 0.5 * k });
+  }
   // a bullet passing close by: supersonic crack + falling whoosh, placed where it passed
   whiz(pos, dist) {
     if (!this.ctx) return;

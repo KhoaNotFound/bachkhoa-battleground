@@ -9,6 +9,7 @@ import { Net } from './net.js';
 import { HUD } from './hud.js';
 import { Inspector, loadAdminKey, verifyAdminKey } from './admin.js';
 import { Chat, RateLimit, cleanChat } from './chat.js';
+import { WEAPONS, isGun, weaponSpeedMult, adsSpeedMult, drawTime, spreadOf, Recoil } from './weapons.js';
 import { clamp, damp, lerp, lerpAngle, angleDiff, cleanName, escapeHtml, r2, r3 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -18,7 +19,9 @@ const COLORS = ['#1e88e5', '#e53935', '#43a047', '#fdd835', '#8e24aa', '#fb8c00'
 
 // ---------------- weapons tuning ----------------
 const FIST = { dmg: 25, head: 35, range: 2.7, cd: 420 };
-const AWM = { head: 250, body: 85, legs: 65, mag: 5, cd: 1350, reload: 2800, switch: 550 };
+const AWM = WEAPONS[1];
+const WEAPON_ORDER = [0, 1, 2, 3, 4, 5];
+const recoil = new Recoil();
 const KNIFE = { dmg: 45, head: 70, heavyDmg: 75, heavyHead: 110, range: 2.9, cd: 380, heavyCd: 680, switch: 520 };
 const MAX_HP = 100;
 const KILL_HEAL = 25;
@@ -213,7 +216,7 @@ const peers = new Map();
 const me = {
   name: '', color: settings.color, alive: false, hp: MAX_HP, kills: 0, deaths: 0,
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), onGround: false,
-  yaw: 0, pitch: 0, crouching: false, crouchV: 0, sprint: false, weapon: 1, lastWeapon: 2, ammo: AWM.mag,
+  yaw: 0, pitch: 0, crouching: false, crouchV: 0, sprint: false, weapon: 1, lastWeapon: 2, ammo: AWM.mag, mags: { 1: WEAPONS[1].mag, 3: WEAPONS[3].mag, 4: WEAPONS[4].mag, 5: WEAPONS[5].mag },
   nextFire: 0, reloadEnd: 0, reloadStart: 0, switchUntil: 0, ads: 0, protectedUntil: 0,
   lastDamage: 0, recoil: 0, shake: 0, stepAcc: 0, landDip: 0, jumpImpulse: 0, landImpulse: 0, killerId: null,
 };
@@ -546,10 +549,10 @@ function handleChatCommand(rawText) {
   // /ammo
   if (cmd === 'ammo') {
     me.infAmmo = !me.infAmmo;
-    me.ammo = AWM.mag;
+    me.ammo = isGun(me.weapon) ? WEAPONS[me.weapon].mag : 0;
     me.reloadEnd = 0;
     if (hud) { hud.setWeapon(me.weapon, me.ammo); hud.setReload(-1); }
-    chat?.system(`[Admin] Đạn vô hạn (Infinite Ammo): ${me.infAmmo ? 'BẬT' : 'TẮT'} (Đã nạp đầy ${AWM.mag} viên)`);
+    chat?.system(`[Admin] Đạn vô hạn (Infinite Ammo): ${me.infAmmo ? 'BẬT' : 'TẮT'} (Đã nạp đầy ${me.ammo} viên)`);
     return true;
   }
 
@@ -572,7 +575,7 @@ function spawn() {
   me.vel.set(0, 0, 0);
   me.yaw = Math.atan2(pick.x, pick.z); // face campus centre
   me.pitch = 0;
-  me.hp = MAX_HP; me.ammo = AWM.mag; me.weapon = 1; me.lastWeapon = 2; me.reloadEnd = 0; me.nextFire = 0; me.ads = 0;
+  me.hp = MAX_HP; me.mags = { 1: WEAPONS[1].mag, 3: WEAPONS[3].mag, 4: WEAPONS[4].mag, 5: WEAPONS[5].mag }; me.ammo = AWM.mag; recoil.reset(); me.weapon = 1; me.lastWeapon = 2; me.reloadEnd = 0; me.nextFire = 0; me.ads = 0;
   me.alive = true; me.crouching = false; me.crouchV = 0; me.sprint = false; me.jumpImpulse = 0; me.landImpulse = 0;
   me.protectedUntil = performance.now() + 2500;
   me.switchUntil = 0; me.lastDamage = 0; me.recoil = 0;
@@ -628,7 +631,13 @@ function die(killerId, m) {
   $('pause').classList.add('hidden');
   $('death').classList.remove('hidden');
   $('deathBy').innerHTML = killer ? `bởi <span style="color:${killer.color}">${escapeHtml(killer.name)}</span>` : '';
-  $('deathInfo').textContent = [m.w === 'fist' ? 'Nắm đấm' : m.w === 'knife' ? 'Dao Butterfly' : 'AWM', m.hs ? 'Headshot' : '', m.dist ? `${Math.round(m.dist)} m` : ''].filter(Boolean).join(' · ');
+  $('deathInfo').textContent = [weaponLabel(m.w), m.hs ? 'Headshot' : '', m.dist ? `${Math.round(m.dist)} m` : ''].filter(Boolean).join(' · ');
+}
+function weaponLabel(w) {
+  if (w === 'fist') return 'Nắm đấm';
+  if (w === 'knife') return 'Dao Butterfly';
+  const g = Object.values(WEAPONS).find((x) => x.id === w);
+  return g ? g.name : 'AWM';
 }
 function leaveToLobby() {
   if (state === 'playing') {
@@ -656,6 +665,9 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Digit1') switchWeapon(0);
   if (e.code === 'Digit2') switchWeapon(1);
   if (e.code === 'Digit3') switchWeapon(2);
+  if (e.code === 'Digit4') switchWeapon(3);
+  if (e.code === 'Digit5') switchWeapon(4);
+  if (e.code === 'Digit6') switchWeapon(5);
   if (e.code === 'KeyQ') switchWeapon(me.lastWeapon !== me.weapon ? me.lastWeapon : (me.weapon === 2 ? 1 : 2));
   if (e.code === 'KeyF' && !e.repeat) vm.setInspect(true);
   if (e.code === 'KeyR') startReload();
@@ -685,7 +697,7 @@ addEventListener('contextmenu', (e) => e.preventDefault());
 addEventListener('wheel', (e) => {
   if (state === 'playing' && document.pointerLockElement === canvas) {
     const dir = e.deltaY > 0 ? 1 : -1;
-    switchWeapon((me.weapon + dir + 3) % 3);
+    switchWeapon(WEAPON_ORDER[(WEAPON_ORDER.indexOf(me.weapon) + dir + WEAPON_ORDER.length) % WEAPON_ORDER.length]);
   }
 });
 addEventListener('resize', onResize);
@@ -701,9 +713,12 @@ addEventListener('beforeunload', () => net.leave());
 // ---------------- weapons ----------------
 function switchWeapon(w) {
   if (w === me.weapon || !me.alive) return;
+  if (isGun(me.weapon)) me.mags[me.weapon] = me.ammo;
   me.lastWeapon = me.weapon;
   me.weapon = w;
-  me.switchUntil = performance.now() + (w === 2 ? KNIFE.switch : AWM.switch);
+  if (isGun(w)) me.ammo = me.mags[w];
+  recoil.reset();
+  me.switchUntil = performance.now() + (w === 2 ? KNIFE.switch : drawTime(w));
   me.reloadEnd = 0;
   adsHeld = false;
   vm.reload(0.0001); vm.reloadT = 1;
@@ -714,10 +729,11 @@ function switchWeapon(w) {
 }
 function startReload() {
   const now = performance.now();
-  if (me.weapon !== 1 || me.ammo >= AWM.mag || me.reloadEnd > now || !me.alive) return;
+  const G = WEAPONS[me.weapon];
+  if (!G || me.ammo >= G.mag || me.reloadEnd > now || !me.alive) return;
   me.reloadStart = now;
-  me.reloadEnd = now + AWM.reload;
-  vm.reload(AWM.reload / 1000);
+  me.reloadEnd = now + G.reload;
+  vm.reload(G.reload / 1000);
   audio.reload();
 }
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _e = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _m = new THREE.Vector3();
@@ -782,18 +798,17 @@ function tryFire(heavy = false) {
     }
     return;
   }
-  // AWM
-  if (me.reloadEnd > now || now < me.nextFire) return;
-  if (me.ammo <= 0 && !me.infAmmo) { audio.dry(); startReload(); return; }
+  // firearm (AWM / UMP45 / M416 / AKM)
+  const G = WEAPONS[me.weapon];
+  if (!G || me.reloadEnd > now || now < me.nextFire) return;
+  if (me.ammo <= 0 && !me.infAmmo) { if (now - (me.dryAt || 0) > 350) { me.dryAt = now; audio.dry(); } startReload(); return; }
   if (!me.infAmmo) me.ammo--;
-  else me.ammo = AWM.mag;
-  me.nextFire = now + AWM.cd;
+  else me.ammo = G.mag;
+  me.nextFire = now + G.cd;
   const hs = Math.hypot(me.vel.x, me.vel.z);
-  const scoped = me.ads > 0.92;
-  let spread = scoped ? 0 : 0.055;
-  spread += (hs / 6) * (scoped ? 0.012 : 0.03);
-  if (!me.onGround) spread += 0.07;
-  if (me.crouching) spread *= 0.6;
+  const scoped = me.weapon === 1 && me.ads > 0.92;
+  const rctx = { ads: me.ads, crouch: me.crouching, moving: hs > 1.5, air: !me.onGround, scoped, speed: hs, bloom: recoil.bloom };
+  const spread = spreadOf(G, rctx); // bullet leaves with the bloom that existed BEFORE this shot
   _o.copy(camera.position); aimDir(_d);
   if (spread > 0) {
     _r.set(1, 0, 0).applyEuler(camera.rotation); _u.set(0, 1, 0).applyEuler(camera.rotation);
@@ -820,19 +835,21 @@ function tryFire(heavy = false) {
   vfx.light.position.copy(muzzle); vfx.lightT = 0;
   if (best) {
     const head = best.part === 'head';
-    const dmg = head ? AWM.head : best.part === 'legs' ? AWM.legs : AWM.body;
+    let dmg = head ? G.head : best.part === 'legs' ? G.legs : G.body;
+    if (G.falloff) dmg *= 1 - G.falloff * clamp((best.t - G.range * 0.4) / (G.range * 1.6), 0, 1); // range falloff
     vfx.blood(_e, _d, head);
-    dealDamage(best.p, dmg, head, 'awm', best.t);
+    dealDamage(best.p, Math.round(dmg), head, G.id, best.t);
   } else if (wall) {
     vfx.impact(_e, wall.normal, wall.mat);
   }
-  net.send({ t: 'f', w: 1, o: [r2(muzzle.x), r2(muzzle.y), r2(muzzle.z)], e: [r2(_e.x), r2(_e.y), r2(_e.z)], h: best ? 1 : 0, n: !best && wall ? wall.normal : undefined, m: !best && wall ? wall.mat : undefined });
-  me.recoil += 0.055;
-  me.shake = Math.max(me.shake, 0.6);
-  vm.fire();
-  audio.awm(null);
-  if (me.ammo > 0) audio.bolt(0.35);
-  else setTimeout(() => { if (me.alive && me.weapon === 1) startReload(); }, 600);
+  net.send({ t: 'f', w: me.weapon, o: [r2(muzzle.x), r2(muzzle.y), r2(muzzle.z)], e: [r2(_e.x), r2(_e.y), r2(_e.z)], h: best ? 1 : 0, n: !best && wall ? wall.normal : undefined, m: !best && wall ? wall.mat : undefined });
+  const kick = recoil.kick(G, rctx, now);
+  me.recoil += me.weapon === 1 ? 0.03 : 0.006 + kick.up * 0.6; // visual-only punch on top of the real kick
+  me.shake = Math.max(me.shake, me.weapon === 1 ? 0.6 : 0.2 + G.weight * 0.03);
+  vm.fire(me.weapon);
+  if (me.weapon === 1) audio.awm(null); else audio.rifle(null, me.weapon);
+  if (me.weapon === 1 && me.ammo > 0) audio.bolt(0.35);
+  else if (me.ammo <= 0) setTimeout(() => { if (me.alive && isGun(me.weapon)) startReload(); }, 600);
   hud.setWeapon(me.weapon, me.ammo);
 }
 function dealDamage(p, dmg, head, weapon, dist) {
@@ -917,7 +934,7 @@ function onNetMessage(from, m) {
       const o = now - m.ts;
       if (p.offset === null || o < p.offset || Math.abs(o - p.offset) > 1500) p.offset = o;
       else p.offset += (o - p.offset) * 0.01;
-      const s = { t: m.ts + p.offset, x: +m.p[0], y: +m.p[1], z: +m.p[2], yaw: +m.r || 0, pitch: +m.x || 0, w: clamp(m.w | 0, 0, 2), c: !!m.c, sp: +m.sp || 0, pr: !!m.pr, g: !!m.g };
+      const s = { t: m.ts + p.offset, x: +m.p[0], y: +m.p[1], z: +m.p[2], yaw: +m.r || 0, pitch: +m.x || 0, w: clamp(m.w | 0, 0, 5), c: !!m.c, sp: +m.sp || 0, pr: !!m.pr, g: !!m.g };
       if (!isFinite(s.x + s.y + s.z)) return;
       p.buf.push(s);
       if (p.buf.length > 40) p.buf.shift();
@@ -938,7 +955,7 @@ function onNetMessage(from, m) {
       const dir = e.clone().sub(o).normalize();
       vfx.tracer(o, e);
       vfx.muzzle(o, dir);
-      audio.awm(o);
+      if ((m.w | 0) >= 3) audio.rifle(o, m.w | 0); else audio.awm(o);
       if (m.h) vfx.blood(e, dir, false);
       else if (Array.isArray(m.n)) vfx.impact(e, m.n, m.m);
       if (p.avatar) p.avatar.fire();
@@ -1013,7 +1030,7 @@ function closestOnSeg(a, b, p) {
 }
 function addKill(killer, victim, weapon, hs, mine, dist) {
   hud.killfeed(killer, victim, weapon, hs, mine || victim.name === myName(), dist);
-  const wName = weapon === 'fist' ? 'nắm đấm' : weapon === 'knife' ? 'dao Butterfly' : 'AWM';
+  const wName = weaponLabel(weapon);
   feed.unshift(`<b style="color:${killer.color}">${escapeHtml(killer.name)}</b> hạ <b style="color:${victim.color}">${escapeHtml(victim.name)}</b> bằng ${wName}${hs ? ' (headshot)' : ''}${dist ? ` · ${Math.round(dist)}m` : ''}`);
   if (feed.length > 30) feed.pop();
 }
@@ -1046,6 +1063,7 @@ function updatePlayer(dt, now) {
   const k = 0.0022 * settings.sens * zoom;
   me.yaw -= mouseDX * k;
   me.pitch = clamp(me.pitch - mouseDY * k, -1.52, 1.52);
+  recoil.compensate(mouseDY * k); // pulling down cancels stored kick
   lookDX = mouseDX; lookDY = mouseDY;
   mouseDX = mouseDY = 0;
 
@@ -1070,10 +1088,11 @@ function updatePlayer(dt, now) {
   const wx = fx * cos + fz * sin, wz = -fx * sin + fz * cos;
   const sprint = keys.ShiftLeft && fz < 0 && !me.crouching && me.ads < 0.3;
   me.sprint = !!sprint;
+  // carry weight: every weapon has a mass (weapons.js) that scales walk / sprint / ADS speed
+  const wMult = weaponSpeedMult(me.weapon);
   let speed = (me.crouching ? 2.8 : sprint ? 8.2 : 5.4) * (me.speedMult || 1);
-  if (me.ads > 0.5) speed *= 0.55;
-  if (me.weapon === 0 && !me.crouching) speed *= 1.08;
-  if (me.weapon === 2 && !me.crouching) speed *= 1.15;
+  if (me.ads > 0.5) speed *= adsSpeedMult(me.weapon);
+  speed *= me.crouching ? 1 + (wMult - 1) * 0.5 : wMult;
   const accel = me.onGround ? 14 : 2.5;
   const tx = (fx || fz) ? wx * speed : 0, tz = (fx || fz) ? wz * speed : 0;
   me.vel.x = damp(me.vel.x, tx, accel, dt);
@@ -1099,11 +1118,16 @@ function updatePlayer(dt, now) {
   }
 
   // weapons state
-  if (me.reloadEnd && now >= me.reloadEnd) { me.reloadEnd = 0; me.ammo = AWM.mag; hud.setWeapon(me.weapon, me.ammo); }
-  hud.setReload(me.reloadEnd ? (now - me.reloadStart) / AWM.reload : -1);
-  const canAds = me.weapon === 1 && !me.reloadEnd && now >= me.switchUntil && adsHeld && !sprint;
+  if (me.reloadEnd && now >= me.reloadEnd) { me.reloadEnd = 0; me.ammo = isGun(me.weapon) ? WEAPONS[me.weapon].mag : me.ammo; hud.setWeapon(me.weapon, me.ammo); }
+  hud.setReload(me.reloadEnd && isGun(me.weapon) ? (now - me.reloadStart) / WEAPONS[me.weapon].reload : -1);
+  const canAds = isGun(me.weapon) && !me.reloadEnd && now >= me.switchUntil && adsHeld && !sprint;
   me.ads = clamp(me.ads + (canAds ? dt * 6 : -dt * 8), 0, 1);
-  if (firing && (me.weapon === 0 || me.weapon === 2)) tryFire(false);
+  if (firing && (me.weapon === 0 || me.weapon === 2 || WEAPONS[me.weapon]?.auto)) tryFire(false);
+  if (me.alive) { // recoil kick moves the real aim (PUBG style: stays until the player pulls down)
+    const r = recoil.update(WEAPONS[me.weapon], dt, now);
+    me.pitch = clamp(me.pitch + r.dPitch, -1.52, 1.52);
+    me.yaw += r.dYaw;
+  }
 
   // regen
   if (me.hp < MAX_HP && now - me.lastDamage > 7000) { me.hp = Math.min(MAX_HP, me.hp + 8 * dt); hud.setHP(me.hp); }
@@ -1116,15 +1140,16 @@ function updatePlayer(dt, now) {
   camera.position.set(me.pos.x, eye, me.pos.z);
   const sh = me.shake * 0.012;
   camera.rotation.set(me.pitch + me.recoil + (Math.random() - 0.5) * sh, me.yaw + (Math.random() - 0.5) * sh, 0);
-  const scoped = me.ads > 0.92;
+  const scoped = me.weapon === 1 && me.ads > 0.92;
   const targetFov = scoped ? 13 : 75 - me.ads * 12 + (sprint && hs > 6 ? 5 : 0);
   if (Math.abs(camera.fov - targetFov) > 0.05) { camera.fov = scoped ? targetFov : damp(camera.fov, targetFov, 14, dt); camera.updateProjectionMatrix(); }
 
   // HUD
   const protectedNow = now < me.protectedUntil;
   hud.protect(protectedNow);
-  let spreadPx = me.weapon === 1 ? 10 + hs * 3 + (me.onGround ? 0 : 20) : 0;
-  if (me.crouching) spreadPx *= 0.6;
+  const GW = WEAPONS[me.weapon];
+  // crosshair gap follows the real bullet cone (bloom, movement, air, crouch, ADS)
+  let spreadPx = GW ? spreadOf(GW, { ads: me.ads, crouch: me.crouching, moving: hs > 1.5, air: !me.onGround, scoped: false, speed: hs, bloom: recoil.bloom }) * 300 - (me.weapon === 1 ? 6 : 0) : 0;
   hud.setSpread(spreadPx);
   if (scoped && (!updatePlayer.rangeT || now - updatePlayer.rangeT > 120)) {
     updatePlayer.rangeT = now;

@@ -16,9 +16,20 @@ Open the GitHub Pages link, enter a name, press play. Needs a keyboard and mouse
 | Left mouse | fire / punch |
 | Right mouse | scope (AWM) |
 | R | reload |
-| 1 / 2 / Q / wheel | switch weapon |
+| 1–6 / Q / wheel | switch weapon (fist, AWM, knife, UMP45, M416, AKM) |
 | Tab | scoreboard |
 | Esc | pause |
+
+Guns have PUBG-style recoil (`js/weapons.js`): every bullet kicks the real aim up and sideways, the climb ramps up over the first shots
+and does not return by itself – pull the mouse down to control the spray. ADS −20 %, crouch −15 %, moving +10 %, airborne +40 %.
+Each gun has a weight that scales move speed (`1.15 − 0.05·kg`):
+
+| Gun | Weight | Speed | Body dmg | Fire rate | Mag | Climb per 30 shots |
+| --- | --- | --- | --- | --- | --- | --- |
+| UMP45 | 2.3 kg | ×1.03 | 20 | 600 rpm | 25 | ~9° (easy) |
+| M416 | 3.5 kg | ×0.97 | 24 | 700 rpm | 30 | ~14° |
+| AKM | 4.3 kg | ×0.93 | 30 | 600 rpm | 30 | ~26° (hard) |
+| AWM | 6.8 kg | ×0.81 | 85 | bolt | 5 | one 2.6° kick per shot |
 
 Damage: AWM headshot 250 (instant kill), body 85, legs 65. Fists: 25 (head 35).
 A kill heals 25 HP. After 7 s without taking damage you regenerate.
