@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLB, warmUpModel, disposeObject3D } from './glb-loader.js';
 import { WEAPONS, WEAPON_SVGS, getWeapon } from './weapons.js';
 import {
   TIER_META,
@@ -94,10 +94,11 @@ class CollectionPreview3D {
     this.pivot = new THREE.Group();
     this.scene.add(this.pivot);
 
-    this.loader = new GLTFLoader();
     this.glbCache = new Map();
+    this.maxCache = 3;
     this.currentModel = null;
     this.loadSeq = 0;
+    this.stageEl = canvas ? canvas.closest('.col-stage') : null;
 
     this.yaw = -Math.PI / 2 + 0.18;
     this.pitch = 0.06;
@@ -119,7 +120,7 @@ class CollectionPreview3D {
   _ensureRenderer() {
     if (this.renderer || !this.canvas) return;
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
@@ -223,6 +224,20 @@ class CollectionPreview3D {
     return clean;
   }
 
+  _evictCache(keepUrl) {
+    if (this.glbCache.size <= this.maxCache) return;
+    for (const [k, obj] of this.glbCache.entries()) {
+      if (this.glbCache.size <= this.maxCache) break;
+      if (k === keepUrl) continue;
+      disposeObject3D(obj);
+      this.glbCache.delete(k);
+    }
+  }
+
+  _setLoading(on) {
+    if (this.stageEl) this.stageEl.classList.toggle('is-loading', !!on);
+  }
+
   show(weaponDef, skinDef) {
     this._ensureRenderer();
     this.resize();
@@ -241,25 +256,32 @@ class CollectionPreview3D {
     if (glbUrl) {
       const cached = this.glbCache.get(glbUrl);
       if (cached) {
+        // Refresh LRU order
+        this.glbCache.delete(glbUrl);
+        this.glbCache.set(glbUrl, cached);
+        this._setLoading(false);
         this._normalizeAndMount(cached.clone(true));
         return;
       }
       this.pivot.clear();
-      this.loader.load(
-        glbUrl,
-        (gltf) => {
+      this._setLoading(true);
+      loadGLB(glbUrl)
+        .then(async (gltf) => {
           const clean = this._extractCleanStaticModel(gltf.scene);
+          await warmUpModel(this.renderer, this.scene, this.camera, clean);
           this.glbCache.set(glbUrl, clean);
+          this._evictCache(glbUrl);
           if (seq !== this.loadSeq) return;
+          this._setLoading(false);
           this._normalizeAndMount(clean.clone(true));
-        },
-        undefined,
-        () => {
+        })
+        .catch(() => {
           if (seq !== this.loadSeq) return;
+          this._setLoading(false);
           this._normalizeAndMount(buildProceduralWeaponMesh(weaponDef));
-        }
-      );
+        });
     } else if (weaponDef.id === 'fist' || skinDef?.meleeType === 'fist') {
+      this._setLoading(false);
       // Stylish blocky gloves pair for Fist (default melee skin)
       const g = new THREE.Group();
       const mat = new THREE.MeshStandardMaterial({ color: 0xf1c27d, roughness: 0.65 });
@@ -273,6 +295,7 @@ class CollectionPreview3D {
       }
       this._normalizeAndMount(g);
     } else {
+      this._setLoading(false);
       this._normalizeAndMount(buildProceduralWeaponMesh(weaponDef));
     }
   }

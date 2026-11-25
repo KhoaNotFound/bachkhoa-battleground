@@ -346,7 +346,7 @@ const feed = [];
         }
       },
     });
-    vm = new ViewModel(renderer, audio);
+    vm = new ViewModel(renderer, audio, { lowGfx: settings.low });
     vm.setColor(me.color);
     const bootPrimary = getWeapon(me.loadout.primary);
     vm.setGunDef(bootPrimary, getEquippedSkin(bootPrimary.id));
@@ -370,8 +370,13 @@ const feed = [];
     vfx.setScale(window.innerHeight);
     debris = new Debris(scene);
     onResize();
-    // warm up shaders
+    // warm up shaders (world + viewmodel)
     renderer.compile(scene, camera);
+    if (typeof renderer.compileAsync === 'function') {
+      renderer.compileAsync(vm.scene, vm.camera).catch(() => {});
+    } else {
+      renderer.compile(vm.scene, vm.camera);
+    }
     setLoad(75, 'Đang kết nối máy chủ…');
     setupLobby();
     lobbyCam(0);
@@ -383,6 +388,14 @@ const feed = [];
     $('lobby').classList.remove('hidden');
     state = 'lobby';
     connectNet();
+
+    // Idle preload equipped secondary & melee models in Lobby so spawning is instant
+    const scheduleIdle = window.requestIdleCallback || ((cb) => setTimeout(cb, 450));
+    scheduleIdle(() => {
+      const secSkin = getEquippedSkin(me.loadout.secondary);
+      if (secSkin?.glb) vm.preloadSkin(secSkin.glb);
+      if (me.loadout.melee === 'knife') vm.butterfly.ensureLoaded();
+    });
   } catch (e) {
     console.error(e);
     setLoad(100, 'Lỗi khi tải game: ' + e.message);
