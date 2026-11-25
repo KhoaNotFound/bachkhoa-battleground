@@ -258,6 +258,7 @@ export class ViewModel {
     this._vandalPos = new THREE.Vector3();
     this._vandalAds = new THREE.Vector3();
     this._sightP = new THREE.Vector3();
+    this._ironAds = false;
     this._vandalCatchPlayed = false;
     this.customInspectT = -1;
     this.customInspectHeld = false;
@@ -977,7 +978,7 @@ export class ViewModel {
     this.customInspectHeld = false;
     this.customInspectT = -1;
     if (this.useAwpGlb) this._playAwmClip('fire', 0.04, true);
-    else if (this.useVandalGlb) this._playVandalClip('fire', 0.02, true);
+    else if (this.useVandalGlb && !this._ironAds) this._playVandalClip('fire', 0.02, true); // in iron ADS the kick is a straight push-back
   }
   reload(dur) {
     this.reloadT = 0;
@@ -1113,23 +1114,19 @@ export class ViewModel {
       const ent = this.vandalActive;
       const ironSight = !!(ent && ent.sightY != null && !(this.gunDef && this.gunDef.scope));
       if (ent && ent.sightGroup) ent.sightGroup.visible = ironSight;
-      if (ironSight) {
-        // put the dot on the screen centre; track it so the idle animation never drifts it off the aim point
-        // (only while idle: fire/reload clips keep their visible motion)
-        if (!ent.sightTrack) ent.sightTrack = new THREE.Vector3(0, ent.sightY, 0);
-        if (ent.sightDot && this.vandal.visible && ent.activeName === 'idle') {
-          ent.sightDot.getWorldPosition(this._sightP);
-          this.vandal.worldToLocal(this._sightP);
-          // (vandal-local = model space: independent of where the gun is placed this frame)
-          ent.sightTrack.lerp(this._sightP, 0.5);
-        }
-        this._vandalAds.set(-ent.sightTrack.x, -ent.sightTrack.y, this.vandalAdsPos.z);
-      } else this._vandalAds.copy(this.vandalAdsPos);
+      // ANCHOR: in iron-sight ADS the front-sight dot is locked to the screen centre (= where the bullet goes).
+      // The gun only slides straight back along the sight line when it fires, so it never rises over the target;
+      // the real climb is done by the camera (gunfeel.js recoil).
+      const lock = ironSight ? ads : 0;
+      this._ironAds = lock > 0.5;
+      if (ironSight) this._vandalAds.set(0, -ent.sightY, this.vandalAdsPos.z);
+      else this._vandalAds.copy(this.vandalAdsPos);
       this._vandalPos.lerpVectors(this.vandalHipPos, this._vandalAds, ads);
       const bm = 1 - ads * (ironSight ? 1 : 0.85);
       const recoilZ = this.recoil * 0.036;
-      const recoilY = this.recoil * 0.009;
-      const recoilRx = this.recoil * 0.055;
+      const recoilY = this.recoil * 0.009 * (1 - lock);
+      const recoilRx = this.recoil * 0.055 * (1 - lock);
+      if (lock > 0.5 && ent.activeName === 'fire') this._playVandalClip('idle', 0.05, true);
       this.vandal.position.set(
         this._vandalPos.x + (bobX + this.swayX) * bm,
         this._vandalPos.y + (bobY + this.swayY) * bm - lower + recoilY,
@@ -1168,10 +1165,17 @@ export class ViewModel {
         this.vandalModelRoot.position.set(0, 0, 0);
         this.vandalModelRoot.rotation.set(0, 0, 0);
       }
+      if (lock > 0 && ent.sightDot) {
+        // remove whatever the animation did to the dot this frame (idle breathing, clip blends)
+        ent.sightDot.getWorldPosition(this._sightP);
+        this.vandal.position.x -= this._sightP.x * lock;
+        this.vandal.position.y -= this._sightP.y * lock;
+      }
 
       this.flashT += dt;
       const silenced = this.gunDef && this.gunDef.silenced;
       this.vandalFlash.visible = !silenced && this.flashT < 0.04;
+      this.vandalFlash.scale.setScalar(0.14 * (1 - 0.75 * lock));
       this.vandalFlash.material.rotation = Math.random() * 6;
       this.vandalFlashLight.intensity = !silenced && this.flashT < 0.05 ? 4.8 : 0;
     } else if (this.shown === 1 && !this.useAwpGlb && !this.useVandalGlb) {
@@ -1187,10 +1191,12 @@ export class ViewModel {
       const py = hy + (ay - hy) * ads;
       const pz = hz + (az - hz) * ads;
       const bm = 1 - ads * (ironSight ? 1 : 0.8);
+      const lock = ironSight ? ads : 0; // dot anchored on the centre: kick is a straight push-back (see GLB branch)
+      this._ironAds = lock > 0.5;
       const rk = this.gunDef ? Math.min(1.8, (this.gunDef.recoilKick || 0.025) * 40) : 1;
       const recoilZ = this.recoil * 0.055 * rk;
-      const recoilY = this.recoil * 0.014 * rk;
-      const recoilRx = this.recoil * 0.10 * rk;
+      const recoilY = this.recoil * 0.014 * rk * (1 - lock);
+      const recoilRx = this.recoil * 0.10 * rk * (1 - lock);
       this.customGun.position.set(
         px + (bobX + this.swayX) * bm,
         py + (bobY + this.swayY) * bm - lower + recoilY,
@@ -1222,6 +1228,7 @@ export class ViewModel {
       this.flashT += dt;
       const silenced = this.gunDef && this.gunDef.silenced;
       this.customFlash.visible = !silenced && this.flashT < 0.04;
+      this.customFlash.scale.setScalar(0.14 * (1 - 0.75 * lock));
       this.customFlash.material.rotation = Math.random() * 6;
       this.customFlashLight.intensity = !silenced && this.flashT < 0.05 ? 4.5 : 0;
     } else if (this.shown === 2) {
