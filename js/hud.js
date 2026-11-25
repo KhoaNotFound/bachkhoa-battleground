@@ -302,6 +302,8 @@ export class HUD {
     if (this.el.ammoSecondary && w === 2) this.el.ammoSecondary.innerHTML = `${ammo}<small>/${reserveText}</small>`;
     this.el.crosshair.classList.toggle('fist', w === 0 || w === 3);
   }
+  // aiming down iron sights: the gun's front-sight dot is the reticle, so the HUD crosshair fades out
+  setIronSight(on) { this.el.crosshair.classList.toggle('iron', !!on); }
   setSpread(px) { this.el.crosshair.style.setProperty('--gap', `${Math.round(6 + px)}px`); }
   setScope(on, range) {
     this.el.scope.classList.toggle('hidden', !on);

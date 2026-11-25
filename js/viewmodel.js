@@ -6,6 +6,94 @@ import { damp, clamp } from './util.js';
 import * as TX from './textures.js';
 
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+
+// ---- Iron sight ("tâm ruồi") ----
+// Every non-scoped gun gets a front post with a small glowing dot on top. In ADS the gun is placed so the dot sits
+// exactly on the screen centre (= where the bullet goes) and every other part of the model stays below the eye line,
+// so nothing covers the aim point. Procedural guns also get a rear notch that frames the dot.
+const SIGHT_DOT_R = 0.0021;          // dot radius (≈4 px at 1080p in ADS)
+const SIGHT_CLEAR = 0.0012;          // gap between the gun's highest point and the bottom of the dot
+const sightPostMat = new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 0.6, metalness: 0.4 });
+const sightDotMat = new THREE.MeshBasicMaterial({ color: 0xb6ff3a, toneMapped: false });
+const sightDotGeo = new THREE.SphereGeometry(SIGHT_DOT_R, 10, 8);
+// opts: { topY: highest point of the gun, frontZ, frontBaseY: gun top under the post, rearZ?, rearBaseY? }
+// returns { group, sightY } – sightY is the dot centre height in the gun's own space
+export function buildIronSight({ topY, frontZ, frontBaseY, rearZ = null, rearBaseY = null }) {
+  const g = new THREE.Group();
+  g.name = 'IronSight';
+  const sightY = topY + SIGHT_CLEAR + SIGHT_DOT_R;
+  const postH = Math.max(0.004, sightY - frontBaseY);
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.0034, postH, 0.006), sightPostMat);
+  post.position.set(0, sightY - postH / 2 - SIGHT_DOT_R * 0.4, frontZ);
+  const dot = new THREE.Mesh(sightDotGeo, sightDotMat);
+  dot.position.set(0, sightY, frontZ);
+  g.add(post, dot);
+  if (rearZ !== null) {
+    // rear notch: two ears whose tops are level with the dot, leaving a gap the dot sits in
+    const earTop = sightY + SIGHT_DOT_R * 0.6;
+    const baseY = rearBaseY ?? topY - 0.006;
+    const earH = Math.max(0.004, earTop - baseY);
+    for (const sx of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.BoxGeometry(0.0045, earH, 0.004), sightPostMat);
+      ear.position.set(sx * 0.0068, earTop - earH / 2, rearZ);
+      g.add(ear);
+    }
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.018, Math.max(0.002, sightY - SIGHT_DOT_R * 2.2 - baseY), 0.004), sightPostMat);
+    bridge.position.set(0, baseY + (sightY - SIGHT_DOT_R * 2.2 - baseY) / 2, rearZ);
+    g.add(bridge);
+  }
+  return { group: g, sightY };
+}
+
+// Measure a loaded (posed) GLB: highest gun vertex, its front end and the top of the gun near the front.
+// Hands/sleeves are ignored. Returns positions in `space` coordinates plus the bone the front is skinned to.
+export function measureGunModel(root, space) {
+  const inv = new THREE.Matrix4().copy(space.matrixWorld).invert();
+  const v = new THREE.Vector3();
+  const pts = [];
+  root.updateMatrixWorld(true);
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const names = [].concat(o.material).map((m) => (m && m.name) || '').join(',');
+    if (/skin|sleeve/i.test(names)) return;
+    const pos = o.geometry.attributes.position;
+    const si = o.geometry.attributes.skinIndex, sw = o.geometry.attributes.skinWeight;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      if (o.isSkinnedMesh) o.applyBoneTransform(i, v);
+      v.applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+      let bone = null;
+      if (o.isSkinnedMesh && si && sw) {
+        let best = -1, bw = 0;
+        for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > bw) { bw = w; best = si.getComponent(i, k); } }
+        bone = o.skeleton.bones[best] || null;
+      }
+      pts.push([v.x, v.y, v.z, bone]);
+    }
+  });
+  if (!pts.length) return null;
+  let topY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of pts) { if (p[1] > topY) topY = p[1]; if (p[2] < minZ) minZ = p[2]; if (p[2] > maxZ) maxZ = p[2]; }
+  let frontZ = minZ + 0.02, frontBaseY = -Infinity;
+  // front post: prefer the model's own front sight: the frontmost centre-line point (front 45 %) that is nearly as high as the top
+  const span = maxZ - minZ;
+  for (let z = minZ + 0.004; z < minZ + span * 0.45 && !isFinite(frontBaseY); z += 0.006) {
+    let y = -Infinity;
+    for (const p of pts) if (Math.abs(p[2] - z) < 0.004 && Math.abs(p[0]) < 0.008 && p[1] > y) y = p[1];
+    if (y >= topY - 0.012) { frontBaseY = y; frontZ = z; }
+  }
+  // otherwise the frontmost slice with material on the centre line (skips gaps in muzzle devices)
+  for (let z = minZ + Math.min(0.025, (maxZ - minZ) * 0.05); z < minZ + (maxZ - minZ) * 0.4 && !isFinite(frontBaseY); z += 0.008) {
+    for (const p of pts) if (Math.abs(p[2] - z) < 0.006 && Math.abs(p[0]) < 0.01 && p[1] > frontBaseY) frontBaseY = p[1];
+    frontZ = z;
+  }
+  if (!isFinite(frontBaseY)) frontBaseY = topY - 0.02;
+  const votes = new Map(); // the bone that carries most of the gun body
+  for (const p of pts) if (p[3]) votes.set(p[3], (votes.get(p[3]) || 0) + 1);
+  let bone = null, nb = 0;
+  for (const [b, n] of votes) if (n > nb) { nb = n; bone = b; }
+  return { topY, minZ, maxZ, frontZ, frontBaseY, bone };
+}
 const AWP_CLIPS = ['draw', 'idle', 'fire', 'reload', 'inspect'];
 const AWP_INSPECT_SOUNDS = [
   { time: 82 / 60,  vol: 0.28, pitch: 0.85 }, // Phase 2: Magazine tap check
@@ -168,6 +256,8 @@ export class ViewModel {
     this.vandalHipPos = new THREE.Vector3(0.115, -0.112, -0.40);
     this.vandalAdsPos = new THREE.Vector3(0, -0.052, -0.25);
     this._vandalPos = new THREE.Vector3();
+    this._vandalAds = new THREE.Vector3();
+    this._sightP = new THREE.Vector3();
     this._vandalCatchPlayed = false;
     this.customInspectT = -1;
     this.customInspectHeld = false;
@@ -501,6 +591,25 @@ export class ViewModel {
         }
       });
 
+      // Measure the gun in its idle pose and mount an iron sight on the bone that carries the barrel
+      try {
+        if (entry.actions.idle) { entry.actions.idle.reset().play(); entry.mixer.update(0); }
+        this.vandalModelRoot.updateMatrixWorld(true);
+        const m = measureGunModel(root, this.vandalModelRoot);
+        if (m) {
+          const { group, sightY } = buildIronSight({ topY: m.topY, frontZ: m.frontZ, frontBaseY: m.frontBaseY });
+          this.vandalModelRoot.add(group);
+          group.updateMatrixWorld(true);
+          (m.bone || root).attach(group); // follows draw/reload/inspect animations and the skin's visibility
+          entry.sightGroup = group;
+          entry.sightDot = group.children[1];
+          entry.sightY = sightY;
+        }
+        entry.mixer.stopAllAction();
+      } catch (e) {
+        console.warn('Iron sight measure failed:', e);
+      }
+
       entry.loaded = true;
       const startClip = entry.pendingClip && entry.actions[entry.pendingClip] ? entry.pendingClip : 'idle';
       this._playVandalClip(startClip, 0, true, entry.pendingDur, entry);
@@ -693,9 +802,6 @@ export class ViewModel {
       addBox(0.044, 0.018, 0.34, 0, 0.052, -0.07, accentMat);
       addBox(0.044, 0.076, 0.19, 0, -0.012, 0.20, darkMat, 0.08);
       addBox(0.036, 0.095, 0.046, 0, -0.06, 0.06, darkMat, 0.24);
-      // Optic rail / holographic sight
-      addBox(0.028, 0.034, 0.08, 0, 0.072, -0.03, darkMat);
-      addBox(0.022, 0.008, 0.01, 0, 0.076, -0.065, accentMat);
       // Barrel
       if (isSil) {
         addCyl(0.020, 0.28, 0, 0.016, -0.40, darkMat);
@@ -716,6 +822,29 @@ export class ViewModel {
         addBox(0.084, 0.084, 0.34, -0.085, -0.11, -0.05, this.sleeveMat, 0.22, 0.48);
         addBox(0.074, 0.074, 0.085, -0.02, -0.052, -0.22, this.skinMat);
       }
+    }
+
+    // Iron sight for every non-scoped gun: measure the finished body and put the dot just above its highest point
+    if (!w.scope) {
+      bodyGroup.updateMatrixWorld(true);
+      const box = new THREE.Box3(), mb = new THREE.Box3();
+      for (const c of bodyGroup.children) box.union(mb.setFromObject(c));
+      const topAt = (z, fallback) => {
+        let y = -Infinity;
+        for (const c of bodyGroup.children) {
+          mb.setFromObject(c);
+          if (z >= mb.min.z - 0.004 && z <= mb.max.z + 0.004 && mb.min.x < 0.01 && mb.max.x > -0.01) y = Math.max(y, mb.max.y);
+        }
+        return isFinite(y) ? y : fallback;
+      };
+      const frontZ = muzzleZ + 0.035;
+      const rearZ = Math.min(box.max.z - 0.03, Math.max(frontZ + 0.12, -0.02));
+      const { group, sightY } = buildIronSight({
+        topY: box.max.y, frontZ, frontBaseY: topAt(frontZ, box.max.y - 0.02),
+        rearZ, rearBaseY: topAt(rearZ, box.max.y - 0.01),
+      });
+      bodyGroup.add(group);
+      g.userData.sightY = sightY;
     }
 
     g.userData.muzzleZ = muzzleZ;
@@ -981,8 +1110,23 @@ export class ViewModel {
       this.flashLight.intensity = this.flashT < 0.06 ? 6 : 0;
     } else if (this.shown === 1 && this.useVandalGlb) {
       const ads = easeOut(s.ads);
-      this._vandalPos.lerpVectors(this.vandalHipPos, this.vandalAdsPos, ads);
-      const bm = 1 - ads * 0.85;
+      const ent = this.vandalActive;
+      const ironSight = !!(ent && ent.sightY != null && !(this.gunDef && this.gunDef.scope));
+      if (ent && ent.sightGroup) ent.sightGroup.visible = ironSight;
+      if (ironSight) {
+        // put the dot on the screen centre; track it so the idle animation never drifts it off the aim point
+        // (only while idle: fire/reload clips keep their visible motion)
+        if (!ent.sightTrack) ent.sightTrack = new THREE.Vector3(0, ent.sightY, 0);
+        if (ent.sightDot && this.vandal.visible && ent.activeName === 'idle') {
+          ent.sightDot.getWorldPosition(this._sightP);
+          this.vandal.worldToLocal(this._sightP);
+          // (vandal-local = model space: independent of where the gun is placed this frame)
+          ent.sightTrack.lerp(this._sightP, 0.5);
+        }
+        this._vandalAds.set(-ent.sightTrack.x, -ent.sightTrack.y, this.vandalAdsPos.z);
+      } else this._vandalAds.copy(this.vandalAdsPos);
+      this._vandalPos.lerpVectors(this.vandalHipPos, this._vandalAds, ads);
+      const bm = 1 - ads * (ironSight ? 1 : 0.85);
       const recoilZ = this.recoil * 0.036;
       const recoilY = this.recoil * 0.009;
       const recoilRx = this.recoil * 0.055;
@@ -1036,11 +1180,13 @@ export class ViewModel {
       const hx = isPistol ? 0.13 : 0.14;
       const hy = isPistol ? -0.12 : -0.125;
       const hz = isPistol ? -0.36 : -0.38;
-      const ax = 0, ay = isPistol ? -0.065 : -0.072, az = isPistol ? -0.26 : -0.28;
+      const sightY = this.activeCustomMesh && this.activeCustomMesh.userData.sightY;
+      const ironSight = sightY != null && !(this.gunDef && this.gunDef.scope);
+      const ax = 0, ay = ironSight ? -sightY : isPistol ? -0.065 : -0.072, az = isPistol ? -0.26 : -0.28;
       const px = hx + (ax - hx) * ads;
       const py = hy + (ay - hy) * ads;
       const pz = hz + (az - hz) * ads;
-      const bm = 1 - ads * 0.8;
+      const bm = 1 - ads * (ironSight ? 1 : 0.8);
       const rk = this.gunDef ? Math.min(1.8, (this.gunDef.recoilKick || 0.025) * 40) : 1;
       const recoilZ = this.recoil * 0.055 * rk;
       const recoilY = this.recoil * 0.014 * rk;

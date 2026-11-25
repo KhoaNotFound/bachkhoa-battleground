@@ -1520,6 +1520,7 @@ function updatePlayer(dt, now) {
   if (me.crouching) spreadPx *= 0.6;
   if (me.ads > 0.4) spreadPx *= 0.5;
   hud.setSpread(spreadPx);
+  hud.setIronSight(curW.slot !== 'melee' && !curW.scope && me.ads > 0.6);
   if (scoped && (!updatePlayer.rangeT || now - updatePlayer.rangeT > 120)) {
     updatePlayer.rangeT = now;
     aimDir(_d);
