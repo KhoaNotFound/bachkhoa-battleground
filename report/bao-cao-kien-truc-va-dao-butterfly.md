@@ -1,8 +1,8 @@
 # Báo Cáo Kiến Trúc Dự Án, AWP Dragon Lore, Vandal 3D Skins, Kho Bộ Sưu Tập, Dao Butterfly & Hiệu Ứng Kill Effect Valorant
 
 **Dự án:** Bách Khoa Battleground  
-**Công nghệ cốt lõi:** HTML5, CSS3, Vanilla ES Modules, Three.js (`v0.164.1`), Blender 5.3 NLA Rigging (`THREE.AnimationMixer`), Canvas 2D Real-time Chroma Key, Web Audio API, WebSocket (`ws`) & MQTT (`mqtt`)  
-**Cập nhật lần cuối:** 23/11/2026
+**Công nghệ cốt lõi:** HTML5, CSS3, Vanilla ES Modules, Three.js (`v0.164.1`), Meshopt (`EXT_meshopt_compression` + `EXT_texture_webp`), Blender 5.3 NLA Rigging (`THREE.AnimationMixer`), Canvas 2D Real-time Chroma Key, Web Audio API, WebSocket (`ws`) & MQTT (`mqtt`)  
+**Cập nhật lần cuối:** 25/11/2026
 
 ---
 
@@ -18,22 +18,22 @@ bachkhoa-battleground/
 ├── .gitattributes              # Cấu hình chuẩn hóa line-ending / binary attributes trong Git
 ├── .gitignore                  # Bỏ qua file tạm/log/node_modules khi commit Git
 │
-├── assets/                     # Chứa tài nguyên 3D nhị phân glTF 2.0, bản đồ nhị phân, âm thanh, ảnh và video hiệu ứng hạ gục
-│   ├── awp-dragon-lore.glb     # CS:GO AWP Dragon Lore (~4.31 MB): Armature 8 xương, tay hộp chữ nhật, 2 texture nhúng & 5 clip NLA (draw, idle, fire, reload, inspect)
-│   ├── butterfly-viewmodel.glb # Rig ViewModel dao Butterfly (~1.37 MB): Armature 23 xương, tay khối hộp chữ nhật & 6 clip NLA (draw, idle, slash_1, slash_2, heavy, inspect)
-│   ├── butterfly-knife.glb     # Mô hình 3D dao Valorant Champions Butterfly gốc (~594 KB) có 2 chốt bản lề SafePinPivot & BitePinPivot
-│   ├── karambit.glb            # Mô hình 3D dao Karambit (~35 KB) dự phòng cho kho cận chiến
+├── assets/                     # Chứa tài nguyên 3D nhị phân glTF 2.0 (đã tối ưu WebP + Meshopt, tổng ~10.72 MB), bản đồ nhị phân, âm thanh, ảnh và video hiệu ứng hạ gục
+│   ├── awp-dragon-lore.glb     # CS:GO AWP Dragon Lore (~1.18 MB): Armature 8 xương, tay hộp chữ nhật, texture WebP 2K & 5 clip NLA (draw, idle, fire, reload, inspect)
+│   ├── butterfly-viewmodel.glb # Rig ViewModel dao Butterfly (~0.34 MB): Armature 23 xương, tay khối hộp chữ nhật & 6 clip NLA (draw, idle, slash_1, slash_2, heavy, inspect)
+│   ├── butterfly-knife.glb     # Mô hình 3D dao Valorant Champions Butterfly gốc (~0.22 MB) có 2 chốt bản lề SafePinPivot & BitePinPivot
+│   ├── karambit.glb            # Mô hình 3D dao Karambit (~0.03 MB) dự phòng cho kho cận chiến
 │   ├── skins/                  # Tài nguyên 3D & ảnh thumbnail cho hệ thống Bộ Sưu Tập (Collection)
-│   │   ├── cs2/                # 5 mô hình CS2 HD làm bản Default CS2 (gắn rig tay khối hộp + 5 clip NLA 60 FPS)
-│   │   │   ├── m4a1s-cs2.glb   # M4A1-S (CS2 Default cho Phantom, ~30.9 MB) — Inspect hất-xoay-hứng
-│   │   │   ├── ak47-cs2.glb    # AK-47 (CS2 Default cho Vandal) — Inspect hất-xoay-hứng
-│   │   │   ├── deagle-cs2.glb  # Desert Eagle (CS2 Default cho Sheriff) — Inspect xoay trái -> ngẩng nòng -> xoay phải
-│   │   │   ├── usps-cs2.glb    # USP-S (CS2 Default cho Classic) — Inspect xoay trái -> ngẩng nòng -> xoay phải
-│   │   │   └── awp-cs2.glb     # AWP (CS2 Default cho Operator) — Inspect súng ngắm riêng
+│   │   ├── cs2/                # 5 mô hình CS2 HD làm bản Default CS2 (gắn rig tay khối hộp + 5 clip NLA 60 FPS, đã nén WebP 2K + Meshopt FILTER)
+│   │   │   ├── m4a1s-cs2.glb   # M4A1-S (CS2 Default cho Phantom, ~2.20 MB) — Inspect hất-xoay-hứng
+│   │   │   ├── ak47-cs2.glb    # AK-47 (CS2 Default cho Vandal, ~1.19 MB) — Inspect hất-xoay-hứng
+│   │   │   ├── deagle-cs2.glb  # Desert Eagle (CS2 Default cho Sheriff, ~0.84 MB) — Inspect xoay trái -> ngẩng nòng -> xoay phải
+│   │   │   ├── usps-cs2.glb    # USP-S (CS2 Default cho Classic, ~0.79 MB) — Inspect xoay trái -> ngẩng nòng -> xoay phải
+│   │   │   └── awp-cs2.glb     # AWP (CS2 Default cho Operator, ~1.20 MB) — Inspect súng ngắm riêng
 │   │   ├── vandal/             # 3 mô hình Vandal chuẩn hóa cùng tỷ lệ (0.76m), gắn rig tay độc lập + Inspect hất-xoay-hứng
-│   │   │   ├── vandal-default.glb   # Vandal mặc định Valorant (~10.2 MB): nhúng 4 texture PBR 2048px (DF, NM, MRS, AEM)
-│   │   │   ├── vandal-forsaken.glb  # Forsaken Vandal (White) (~8.5 MB): nhúng texture trắng mạ vàng + tinh thể xanh ngọc
-│   │   │   └── vandal-rgx.glb       # RGX 11z Pro Vandal (~11.0 MB): khung vỏ trong suốt + dải LED phát sáng emission PBR
+│   │   │   ├── vandal-default.glb   # Vandal mặc định Valorant (~0.74 MB): texture PBR WebP 2K
+│   │   │   ├── vandal-forsaken.glb  # Forsaken Vandal (White) (~1.00 MB): texture trắng mạ vàng + tinh thể xanh ngọc (WebP 2K)
+│   │   │   └── vandal-rgx.glb       # RGX 11z Pro Vandal (~1.00 MB): khung vỏ trong suốt + dải LED phát sáng emission PBR (WebP 2K)
 │   │   └── thumbs/             # Ảnh thumbnail PNG nền trong suốt (512×256)
 │   │       ├── vandal-default.png · vandal-cs2.png · vandal-forsaken.png · vandal-rgx.png
 │   │       ├── phantom-cs2.png · sheriff-cs2.png · classic-cs2.png
@@ -59,8 +59,9 @@ bachkhoa-battleground/
 │   ├── skins.js                # Danh mục skin toàn bộ 20 vũ khí, lưu trạng thái sở hữu & trang bị trong localStorage (bkbg.skins), API unlockAllSkins / resetSkins
 │   ├── collection.js           # Giao diện Bộ Sưu Tập 2 tầng kiểu Valorant (View 1 lưới vũ khí, View 2 chi tiết skin + ổ khóa 🔒 + xem trước 3D xoay 360° trực tiếp)
 │   ├── shop.js                 # Bảng mua vũ khí kiểu Valorant (nhấn B): 5 cột vũ khí + bảng thông số chi tiết bên phải + tùy chọn dùng Dao hoặc Nắm đấm
-│   ├── butterfly.js            # Điều khiển dao Butterfly: nạp butterfly-viewmodel.glb qua THREE.AnimationMixer, vật lý 6-DOF Tầng 1 & clack audio đồng bộ frame
-│   ├── viewmodel.js            # Scene góc nhìn thứ nhất (FOV 62°), PMREM studio lighting, AWP Dragon Lore GLB, Vandal GLB đa skin (cache động), Dao Butterfly GLB & procedural ViewModel + export buildProceduralWeaponMesh
+│   ├── butterfly.js            # Điều khiển dao Butterfly: lazy-load butterfly-viewmodel.glb qua glb-loader.js, THREE.AnimationMixer, vật lý 6-DOF Tầng 1 & clack audio đồng bộ frame
+│   ├── glb-loader.js           # Module nạp .glb dùng chung: singleton GLTFLoader + MeshoptDecoder, cache ArrayBuffer chống tải trùng, warmUpModel() (upload 1 texture/frame + compileAsync) & disposeObject3D()
+│   ├── viewmodel.js            # Scene góc nhìn thứ nhất (FOV 62°), PMREM studio lighting, lazy-load AWP/Vandal/CS2 GLB, LRU VRAM cache (tối đa 4), idle preload & procedural ViewModel
 │   ├── admin.js                # Xác thực khóa Admin (?admin=<key> hoặc /admin <key>) và chế độ camera bay tự do Inspector (nút ADMIN · INSPECT MAP)
 │   ├── chat.js                 # Khung chat toàn phòng (phím /), giới hạn tốc độ gửi tin (RateLimit) và xử lý các lệnh slash (/time, /tp, /dummy, /killfx, /unlock all...)
 │   ├── campus-data.js          # Dữ liệu hình học & tọa độ các khu vực, tòa nhà khuôn viên ĐH Bách Khoa
@@ -82,11 +83,13 @@ bachkhoa-battleground/
 │   └── js/                     # Logic riêng (main.js, map.js, net.js, tasks-logic.js, tasks-ui.js, voice.js)
 │
 ├── server/                     # Backend nhẹ để relay dữ liệu multiplayer độ trễ thấp
-│   ├── server.js               # HTTP static server (hỗ trợ .glb, .mp4, .webm, .mp3) + WebSocket room relay + cầu nối 2 chiều sang MQTT broker
+│   ├── server.js               # HTTP static server (streaming, ETag, 304 Not Modified, Cache-Control 7 ngày cho .glb/.bin/.webp) + WebSocket room relay + cầu nối 2 chiều sang MQTT broker
 │   ├── package.json            # Khai báo dependencies (ws, mqtt) và lệnh khởi chạy server
 │   └── package-lock.json       # Khóa phiên bản chính xác các gói npm của server
 │
-├── tools/                      # Bộ công cụ Python ngoại tuyến xây dựng bản đồ, va chạm và khóa Admin
+├── tools/                      # Bộ công cụ Python & Node.js ngoại tuyến xây dựng bản đồ, va chạm, tối ưu GLB và khóa Admin
+│   ├── optimize-weapons.mjs    # Script Node.js chuẩn hóa & nén toàn bộ model súng .glb (lọc animation thừa, resize WebP 2K/1K, Meshopt FILTER lossless)
+│   ├── package.json            # Dependencies cho pipeline tối ưu GLB (@gltf-transform, sharp, meshoptimizer)
 │   ├── build_campus.py         # Biên dịch dữ liệu OSM / khuôn viên thành campus.bin & minimap.png
 │   ├── build_obj_map.py        # Chuyển đổi các file .obj từ Blender sang định dạng bản đồ tối ưu (map-review)
 │   ├── voxel_collision.py      # Sinh lưới hộp va chạm AABB nhị phân (collision.bin) từ hình học 3D
@@ -95,7 +98,7 @@ bachkhoa-battleground/
 │   ├── landmarks.json          # Cấu hình tọa độ các địa điểm nổi bật trong trường
 │   └── osm-campus.json         # Dữ liệu bản đồ OpenStreetMap khu vực 268 Lý Thường Kiệt
 │
-├── vendor/                     # Thư viện cục bộ không phụ thuộc CDN (three.module.js, GLTFLoader.js, BufferGeometryUtils.js, mqtt.esm.js)
+├── vendor/                     # Thư viện cục bộ không phụ thuộc CDN (three.module.js, GLTFLoader.js, BufferGeometryUtils.js, addons/libs/meshopt_decoder.module.js, mqtt.esm.js)
 │
 └── report/                     # Thư mục lưu trữ các báo cáo kỹ thuật & tài liệu phân tích dự án
     └── bao-cao-kien-truc-va-dao-butterfly.md  # Báo cáo hiện tại
@@ -314,7 +317,84 @@ window.__game.vm.butterfly.playTrick('inspect', false);   // Chạy trọn 1 vò
 
 ---
 
-## 4. Lưu Ý Khi Chạy Game Ở Máy Local
+## 4. Pipeline Tối Ưu Hóa Model 3D (.glb) & Hướng Dẫn Thêm Skin Mới
+
+### 4.1. Tại sao cần tối ưu hóa & Kết quả đạt được
+
+Trước khi tối ưu, 12 file `.glb` nặng tổng cộng **257.60 MB** (riêng bộ CS2 từ 30–53.7 MB/khẩu) do nhúng texture PNG `4096×4096` chưa nén (~256 MB VRAM/khẩu khi giải nén kèm mipmap) và chứa tới 27–58 animation thừa không dùng đến. Việc giải mã PNG 4K + upload 256 MB texture + biên dịch shader PBR đồng bộ trên 1 frame gây tải lâu và đứng/lag máy ngay sau khi load xong.
+
+Sau khi áp dụng pipeline tối ưu (`tools/optimize-weapons.mjs` + `js/glb-loader.js`):
+- **Tổng dung lượng kho súng**: **257.60 MB → 10.72 MB (giảm 95.8%)**.
+- **Hình học (Geometry)**: giữ nguyên **100% số đỉnh, số tam giác và tọa độ thực** (`maxDiff = 0.00e+0`), **không giảm đa giác**.
+- **VRAM mỗi khẩu CS2**: giảm 4–6× (~256 MB → ~40–64 MB).
+- **Chất lượng hình ảnh**: giữ nguyên độ sắc nét PBR ở 1080p/1440p (WebP `2048×2048` q=90–92 cho Albedo/Normal/Emissive; `1024×1024` cho Roughness/Metallic/AO).
+- **Bản gốc**: tự động sao lưu tại `_backup_glb/` (đã thêm vào `.gitignore`, không đẩy lên Git).
+
+| File `.glb` | Trước | Sau | Giảm | Animations giữ lại |
+| :--- | ---: | ---: | ---: | :--- |
+| `assets/skins/cs2/ak47-cs2.glb` | 53.70 MB | **1.19 MB** | -97.8% | 58 → 5 (`draw, idle, fire, reload, inspect`) |
+| `assets/skins/cs2/awp-cs2.glb` | 48.25 MB | **1.20 MB** | -97.5% | 27 → 5 |
+| `assets/skins/cs2/deagle-cs2.glb` | 45.91 MB | **0.84 MB** | -98.2% | 57 → 5 |
+| `assets/skins/cs2/usps-cs2.glb` | 44.34 MB | **0.79 MB** | -98.2% | 53 → 5 |
+| `assets/skins/cs2/m4a1s-cs2.glb` | 30.22 MB | **2.20 MB** | -92.7% | 5 → 5 |
+| `assets/skins/vandal/vandal-rgx.glb` | 10.72 MB | **1.00 MB** | -90.7% | 10 → 5 |
+| `assets/skins/vandal/vandal-default.glb` | 10.03 MB | **0.74 MB** | -92.6% | 10 → 5 |
+| `assets/skins/vandal/vandal-forsaken.glb` | 8.38 MB | **1.00 MB** | -88.0% | 10 → 5 |
+| `assets/awp-dragon-lore.glb` | 4.11 MB | **1.18 MB** | -71.3% | 5 → 5 |
+| `assets/butterfly-viewmodel.glb` | 1.31 MB | **0.34 MB** | -74.0% | 6 → 6 (`draw, idle, slash_1, slash_2, heavy, inspect`) |
+| `assets/butterfly-knife.glb` | 0.58 MB | **0.22 MB** | -62.2% | 0 |
+| `assets/karambit.glb` | 0.03 MB | **0.03 MB** | -1.2% | 0 |
+
+### 4.2. Kiến Trúc Tải & Chống Lag Runtime
+
+1. **Shared Loader & MeshoptDecoder (`js/glb-loader.js`, `vendor/addons/libs/meshopt_decoder.module.js`)**:
+   - Dùng duy nhất 1 singleton `GLTFLoader` gắn `MeshoptDecoder` (~25 KB, hoạt động offline) và bộ đệm `ArrayBuffer` dùng chung giữa `ViewModel`, `CollectionPreview3D` và `Avatar` (không tải mạng 2 lần cùng 1 URL).
+2. **Async GPU Warm-up (`warmUpModel()` trong `js/glb-loader.js`)**:
+   - Trước khi bật `root.visible = true`, tự động upload từng texture rải đều **1 texture / frame** (`renderer.initTexture(tex)`) và gọi `await renderer.compileAsync(root, camera, scene)` để biên dịch shader bất đồng bộ → loại bỏ hoàn toàn cú khựng frame sau khi load.
+3. **Lazy-Load, Lobby Idle Preload & Quản Lý VRAM LRU**:
+   - `ViewModel` và `ButterflyController` không còn tải sẵn các model không được trang bị lúc boot.
+   - Khi vào sảnh Lobby (`js/main.js`), trình duyệt dùng `requestIdleCallback` tải trước âm thầm đúng súng chính, súng phụ (và dao nếu trang bị) để lúc bấm **VÀO TRẬN** xuất hiện ngay lập tức.
+   - `ViewModel` giữ tối đa **4 model** trên GPU, `CollectionPreview3D` giữ tối đa **3 model** trên GPU; model cũ hơn tự động bị giải phóng bằng `disposeObject3D()`.
+4. **HTTP Caching & Streaming (`server/server.js`)**:
+   - Dùng `fs.createReadStream` thay cho `fs.readFile`, trả về `ETag`, `Last-Modified`, hỗ trợ **`304 Not Modified`** và `Cache-Control: public, max-age=604800, stale-while-revalidate=86400` cho `.glb`, `.bin`, `.png`, `.webp`, `.wasm`.
+
+### 4.3. Quy Trình Chuẩn 5 Bước Khi Thêm Skin Súng 3D Mới
+
+Mỗi khi thêm một skin `.glb` mới vào game, làm đúng 5 bước sau để đảm bảo **tải nhanh, không lag và không lỗi hiển thị trong Collection**:
+
+1. **Chuẩn bị file `.glb` từ Blender**:
+   - Đảm bảo có đủ 5 clip NLA (60 FPS) đặt đúng tên: `draw`, `idle`, `fire`, `reload`, `inspect` (với dao cận chiến là `draw`, `idle`, `slash_1`, `slash_2`, `heavy`, `inspect`).
+   - Vật liệu tay áo và da tay đặt tên chính xác là `SleeveMat` và `SkinMat` để `ViewModel` tự đồng bộ màu áo người chơi và `CollectionPreview3D` tự ẩn tay khi xoay 360°.
+   - Đặt file `.glb` vào `assets/skins/<nhom>/<ten-skin>.glb` và ảnh thumbnail PNG nền trong suốt (`512×256`) vào `assets/skins/thumbs/<ten-skin>.png`.
+
+2. **Đăng ký vào script tối ưu `tools/optimize-weapons.mjs`**:
+   - Mở `tools/optimize-weapons.mjs` và thêm 1 dòng vào mảng `TARGETS`:
+     ```js
+     { rel: 'assets/skins/vandal/vandal-new-skin.glb', clips: GUN_CLIPS },
+     ```
+   - **Lưu ý kỹ thuật cực kỳ quan trọng**: **KHÔNG BAO GIỜ** bật `quantize()` trên các model súng `SkinnedMesh`. `quantize()` chuẩn hóa `POSITION` về `[-1, 1]` và bù tỉ lệ vào `inverseBindMatrices` của bộ xương — khi `CollectionPreview3D._extractCleanStaticModel()` hoặc `avatar.js` tách mesh tĩnh (bỏ bộ xương), các bộ phận nhỏ như băng đạn/khóa nòng sẽ bị phóng to bất thường. Script `optimize-weapons.mjs` đã khóa sẵn chế độ nén `EXTMeshoptCompression.EncoderMethod.FILTER` (lossless, giữ nguyên 100% tọa độ thực).
+
+3. **Chạy tối ưu hóa (tự động backup bản gốc vào `_backup_glb/`)**:
+   ```bash
+   # Chỉ cần cài 1 lần duy nhất nếu chưa có tools/node_modules:
+   npm install --prefix tools
+
+   # Chạy tối ưu toàn bộ danh sách TARGETS (script tự đọc từ _backup_glb/ cho file cũ):
+   node tools/optimize-weapons.mjs
+   ```
+   - Kiểm tra log đầu ra: xác nhận `tris:OK` và danh sách `anims` đủ 5 clip `[draw,fire,idle,inspect,reload]`.
+
+4. **Khai báo skin trong `js/skins.js`**:
+   - Thêm object skin vào `CUSTOM_SKINS[<weaponId>]` (trỏ `glb` và `thumb` tới file vừa thêm, đặt `tier` là `standard | select | deluxe | premium | exclusive`, `ownedByDefault: true/false`).
+
+5. **Kiểm tra trên trình duyệt**:
+   - Nhấn **`Ctrl + Shift + R`** (hard reload) để bỏ cache cũ.
+   - Mở **Bộ Sưu Tập · Skins** xoay 360° kiểm tra tỉ lệ thân súng, băng đạn, vật liệu PBR (nhấn `/` gõ `/admin dev` rồi `/unlock all` nếu skin đang bị khóa).
+   - Bấm **VÀO TRẬN**, chọn súng (phím `B`), kiểm tra đủ 5 hoạt ảnh: rút súng, đứng yên, bắn, nạp đạn (`R`), soi súng (`F`).
+
+---
+
+## 5. Lưu Ý Khi Chạy Game Ở Máy Local
 
 - **Không mở trực tiếp `index.html` bằng `file:///`**: trình duyệt chặn `<script type="module">` và `fetch()` tới các file `.glb` (`assets/awp-dragon-lore.glb`, `assets/butterfly-viewmodel.glb`) do chính sách CORS khiến màn hình tải dừng ở 0%.
 - **Cách chạy chuẩn**: Khởi động một HTTP server trong thư mục gốc dự án rồi truy cập `http://localhost:8787`:

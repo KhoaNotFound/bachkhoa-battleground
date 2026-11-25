@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLB, warmUpModel, disposeObject3D } from './glb-loader.js';
 import { buildAwmMesh } from './avatar.js';
 import { ButterflyController } from './butterfly.js';
 import { damp, clamp } from './util.js';
@@ -46,7 +46,9 @@ function buildViewModelEnv(renderer) {
 }
 
 export class ViewModel {
-  constructor(renderer = null, audio = null) {
+  constructor(renderer = null, audio = null, opts = {}) {
+    this.renderer = renderer;
+    this.lowGfx = !!opts.lowGfx;
     this.audio = audio;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(62, 1, 0.01, 10);
@@ -94,6 +96,7 @@ export class ViewModel {
     this.awm.add(this.awmModelRoot);
 
     this.awmLoaded = false;
+    this.awmLoading = false;
     this.awmMixer = null;
     this.awmActions = Object.create(null);
     this.awmActiveAction = null;
@@ -106,7 +109,7 @@ export class ViewModel {
     this._awmSleeveMat = null;
 
     this._createAwmFallback(skin);
-    this._loadAwpDragonLoreGLB();
+    // Lazy-loaded on demand when operator_dragon_lore is equipped or preloaded
 
     this.muzzle = new THREE.Object3D();
     this.muzzle.position.set(0, 0.006, -0.52);
@@ -123,7 +126,12 @@ export class ViewModel {
     this.awm.add(this.flashLight);
 
     // ---- Butterfly Knife (weapon 2) ----
-    this.butterfly = new ButterflyController(this.sleeveMat, skin, audio);
+    this.butterfly = new ButterflyController(this.sleeveMat, skin, audio, {
+      renderer: this.renderer,
+      scene: this.scene,
+      camera: this.camera,
+      lowGfx: this.lowGfx,
+    });
     this.root.add(this.butterfly.group);
 
     // ---- Procedural Custom Gun ViewModel (for bought sidearms/SMGs/rifles/shotguns/LMGs/snipers) ----
@@ -144,6 +152,7 @@ export class ViewModel {
     this.vandalModelRoot = new THREE.Group();
     this.vandal.add(this.vandalModelRoot);
     this.vandalCache = new Map();
+    this.maxVandalCache = 4;
     this.vandalActive = null;
     this.vandalUrl = null;
     this.vandalInspectHeld = false;
@@ -237,70 +246,74 @@ export class ViewModel {
     mat.needsUpdate = true;
   }
 
-  _loadAwpDragonLoreGLB() {
-    const loader = new GLTFLoader();
-    loader.load(
-      'assets/awp-dragon-lore.glb',
-      (gltf) => {
-        const root = gltf.scene;
-        root.traverse((o) => {
-          if (o.isMesh) {
-            o.frustumCulled = false;
-            o.castShadow = false;
-            o.receiveShadow = false;
-            if (Array.isArray(o.material)) {
-              for (let i = 0; i < o.material.length; i++) this._tuneAwpMaterial(o.material[i]);
-            } else {
-              this._tuneAwpMaterial(o.material);
-            }
-          }
-        });
-
-        if (this.awmFallback) {
-          this.awmFallback.removeFromParent();
-          this.awmFallback = null;
-          this.gun = null;
-          this.bolt = null;
-          this.mag = null;
-        }
-        this.awmModelRoot.add(root);
-
-        this.awmMixer = new THREE.AnimationMixer(root);
-        for (const name of AWP_CLIPS) {
-          const clip = THREE.AnimationClip.findByName(gltf.animations, name);
-          if (!clip) {
-            console.warn(`awp-dragon-lore.glb missing expected NLA clip: ${name}`);
-            continue;
-          }
-          const action = this.awmMixer.clipAction(clip);
-          if (name === 'idle') {
-            action.setLoop(THREE.LoopRepeat, Infinity);
+  async _loadAwpDragonLoreGLB() {
+    if (this.awmLoaded || this.awmLoading) return;
+    this.awmLoading = true;
+    try {
+      const gltf = await loadGLB('assets/awp-dragon-lore.glb');
+      const root = gltf.scene;
+      root.visible = false;
+      root.traverse((o) => {
+        if (o.isMesh) {
+          o.frustumCulled = false;
+          o.castShadow = false;
+          o.receiveShadow = false;
+          if (Array.isArray(o.material)) {
+            for (let i = 0; i < o.material.length; i++) this._tuneAwpMaterial(o.material[i]);
           } else {
-            action.setLoop(THREE.LoopOnce, 1);
-            action.clampWhenFinished = true;
+            this._tuneAwpMaterial(o.material);
           }
-          this.awmActions[name] = action;
         }
+      });
 
-        this.awmMixer.addEventListener('finished', (e) => {
-          if (e.action === this.awmActiveAction && e.action !== this.awmActions.idle) {
-            if (e.action === this.awmActions.inspect) {
-              this._playAwmClip(this.awmInspectHeld ? 'inspect' : 'idle', this.awmInspectHeld ? 0.06 : 0.15, true);
-            } else {
-              this._playAwmClip('idle', 0.10, true);
-            }
-          }
-        });
+      // Stagger GPU texture uploads & async shader compile before revealing
+      await warmUpModel(this.renderer, this.scene, this.camera, root, { lowGfx: this.lowGfx });
 
-        this.awmLoaded = true;
-        const startClip = this.awmPendingClip && this.awmActions[this.awmPendingClip] ? this.awmPendingClip : 'idle';
-        this._playAwmClip(startClip, 0, true, this.awmPendingDur);
-      },
-      undefined,
-      (err) => {
-        console.warn('Could not load assets/awp-dragon-lore.glb, keeping fallback AWM:', err);
+      if (this.awmFallback) {
+        this.awmFallback.removeFromParent();
+        disposeObject3D(this.awmFallback);
+        this.awmFallback = null;
+        this.gun = null;
+        this.bolt = null;
+        this.mag = null;
       }
-    );
+      root.visible = true;
+      this.awmModelRoot.add(root);
+
+      this.awmMixer = new THREE.AnimationMixer(root);
+      for (const name of AWP_CLIPS) {
+        const clip = THREE.AnimationClip.findByName(gltf.animations, name);
+        if (!clip) {
+          console.warn(`awp-dragon-lore.glb missing expected NLA clip: ${name}`);
+          continue;
+        }
+        const action = this.awmMixer.clipAction(clip);
+        if (name === 'idle') {
+          action.setLoop(THREE.LoopRepeat, Infinity);
+        } else {
+          action.setLoop(THREE.LoopOnce, 1);
+          action.clampWhenFinished = true;
+        }
+        this.awmActions[name] = action;
+      }
+
+      this.awmMixer.addEventListener('finished', (e) => {
+        if (e.action === this.awmActiveAction && e.action !== this.awmActions.idle) {
+          if (e.action === this.awmActions.inspect) {
+            this._playAwmClip(this.awmInspectHeld ? 'inspect' : 'idle', this.awmInspectHeld ? 0.06 : 0.15, true);
+          } else {
+            this._playAwmClip('idle', 0.10, true);
+          }
+        }
+      });
+
+      this.awmLoaded = true;
+      const startClip = this.awmPendingClip && this.awmActions[this.awmPendingClip] ? this.awmPendingClip : 'idle';
+      this._playAwmClip(startClip, 0, true, this.awmPendingDur);
+    } catch (err) {
+      this.awmLoading = false;
+      console.warn('Could not load assets/awp-dragon-lore.glb, keeping fallback AWM:', err);
+    }
   }
 
   _updateAwmSoundEvents() {
@@ -379,19 +392,48 @@ export class ViewModel {
     mat.needsUpdate = true;
   }
 
-  _loadOrActivateVandalGLB(url) {
-    const targetUrl = url || 'assets/skins/vandal/vandal-default.glb';
-    this.vandalUrl = targetUrl;
-
+  _evictVandalCache() {
+    if (this.vandalCache.size <= this.maxVandalCache) return;
     for (const [k, ent] of this.vandalCache.entries()) {
-      if (ent.root) ent.root.visible = (k === targetUrl);
+      if (this.vandalCache.size <= this.maxVandalCache) break;
+      if (k === this.vandalUrl || ent === this.vandalActive || !ent.loaded) continue;
+      if (ent.root) {
+        ent.root.removeFromParent();
+        disposeObject3D(ent.root);
+      }
+      if (ent.mixer && ent.root) ent.mixer.uncacheRoot(ent.root);
+      this.vandalCache.delete(k);
+    }
+  }
+
+  preloadSkin(url) {
+    if (!url) return;
+    if (url === 'assets/awp-dragon-lore.glb') {
+      this._loadAwpDragonLoreGLB();
+    } else {
+      this._loadOrActivateVandalGLB(url, { preloadOnly: true });
+    }
+  }
+
+  async _loadOrActivateVandalGLB(url, { preloadOnly = false } = {}) {
+    const targetUrl = url || 'assets/skins/vandal/vandal-default.glb';
+    if (!preloadOnly) {
+      this.vandalUrl = targetUrl;
+      for (const [k, ent] of this.vandalCache.entries()) {
+        if (ent.root) ent.root.visible = (k === targetUrl);
+      }
     }
 
     let entry = this.vandalCache.get(targetUrl);
     if (entry) {
-      this.vandalActive = entry;
-      if (entry.loaded) {
-        this._playVandalClip(entry.pendingClip || 'idle', 0.05, false, entry.pendingDur || 0);
+      // Refresh LRU position
+      this.vandalCache.delete(targetUrl);
+      this.vandalCache.set(targetUrl, entry);
+      if (!preloadOnly) {
+        this.vandalActive = entry;
+        if (entry.loaded) {
+          this._playVandalClip(entry.pendingClip || 'idle', 0.05, false, entry.pendingDur || 0);
+        }
       }
       return;
     }
@@ -404,68 +446,69 @@ export class ViewModel {
       sleeveMats: [],
       activeAction: null,
       activeName: 'idle',
-      pendingClip: 'draw',
+      pendingClip: preloadOnly ? 'idle' : 'draw',
       pendingDur: 0,
       loaded: false,
     };
     this.vandalCache.set(targetUrl, entry);
-    this.vandalActive = entry;
+    if (!preloadOnly) this.vandalActive = entry;
 
-    const loader = new GLTFLoader();
-    loader.load(
-      targetUrl,
-      (gltf) => {
-        const root = gltf.scene;
-        root.traverse((o) => {
-          if (o.isMesh) {
-            o.frustumCulled = false;
-            o.castShadow = false;
-            o.receiveShadow = false;
-            if (Array.isArray(o.material)) {
-              for (let i = 0; i < o.material.length; i++) this._tuneVandalMaterial(o.material[i], entry);
-            } else {
-              this._tuneVandalMaterial(o.material, entry);
-            }
-          }
-        });
-
-        root.visible = (this.vandalUrl === targetUrl);
-        this.vandalModelRoot.add(root);
-        entry.root = root;
-        entry.mixer = new THREE.AnimationMixer(root);
-
-        for (const name of AWP_CLIPS) {
-          const clip = THREE.AnimationClip.findByName(gltf.animations, name);
-          if (!clip) continue;
-          const action = entry.mixer.clipAction(clip);
-          if (name === 'idle') {
-            action.setLoop(THREE.LoopRepeat, Infinity);
+    try {
+      const gltf = await loadGLB(targetUrl);
+      const root = gltf.scene;
+      root.visible = false;
+      root.traverse((o) => {
+        if (o.isMesh) {
+          o.frustumCulled = false;
+          o.castShadow = false;
+          o.receiveShadow = false;
+          if (Array.isArray(o.material)) {
+            for (let i = 0; i < o.material.length; i++) this._tuneVandalMaterial(o.material[i], entry);
           } else {
-            action.setLoop(THREE.LoopOnce, 1);
-            action.clampWhenFinished = true;
+            this._tuneVandalMaterial(o.material, entry);
           }
-          entry.actions[name] = action;
         }
+      });
 
-        entry.mixer.addEventListener('finished', (e) => {
-          if (e.action === entry.activeAction && e.action !== entry.actions.idle) {
-            if (e.action === entry.actions.inspect) {
-              this._playVandalClip(this.vandalInspectHeld ? 'inspect' : 'idle', this.vandalInspectHeld ? 0.06 : 0.15, true, 0, entry);
-            } else {
-              this._playVandalClip('idle', 0.08, true, 0, entry);
-            }
-          }
-        });
+      // Stagger GPU texture uploads & async shader compile before showing
+      await warmUpModel(this.renderer, this.scene, this.camera, root, { lowGfx: this.lowGfx });
 
-        entry.loaded = true;
-        const startClip = entry.pendingClip && entry.actions[entry.pendingClip] ? entry.pendingClip : 'idle';
-        this._playVandalClip(startClip, 0, true, entry.pendingDur, entry);
-      },
-      undefined,
-      (err) => {
-        console.warn(`Could not load Vandal GLB (${targetUrl}):`, err);
+      root.visible = (this.vandalUrl === targetUrl);
+      this.vandalModelRoot.add(root);
+      entry.root = root;
+      entry.mixer = new THREE.AnimationMixer(root);
+
+      for (const name of AWP_CLIPS) {
+        const clip = THREE.AnimationClip.findByName(gltf.animations, name);
+        if (!clip) continue;
+        const action = entry.mixer.clipAction(clip);
+        if (name === 'idle') {
+          action.setLoop(THREE.LoopRepeat, Infinity);
+        } else {
+          action.setLoop(THREE.LoopOnce, 1);
+          action.clampWhenFinished = true;
+        }
+        entry.actions[name] = action;
       }
-    );
+
+      entry.mixer.addEventListener('finished', (e) => {
+        if (e.action === entry.activeAction && e.action !== entry.actions.idle) {
+          if (e.action === entry.actions.inspect) {
+            this._playVandalClip(this.vandalInspectHeld ? 'inspect' : 'idle', this.vandalInspectHeld ? 0.06 : 0.15, true, 0, entry);
+          } else {
+            this._playVandalClip('idle', 0.08, true, 0, entry);
+          }
+        }
+      });
+
+      entry.loaded = true;
+      const startClip = entry.pendingClip && entry.actions[entry.pendingClip] ? entry.pendingClip : 'idle';
+      this._playVandalClip(startClip, 0, true, entry.pendingDur, entry);
+      this._evictVandalCache();
+    } catch (err) {
+      this.vandalCache.delete(targetUrl);
+      console.warn(`Could not load Vandal GLB (${targetUrl}):`, err);
+    }
   }
 
   _playVandalClip(name, fadeSec = 0.06, forceRestart = true, targetDur = 0, targetEntry = null) {
@@ -711,7 +754,9 @@ export class ViewModel {
         this.vandalFlash.position.set(0, 0.015, -0.53);
       }
       this._loadOrActivateVandalGLB(glbUrl);
-    } else if (!this.useAwpGlb) {
+    } else if (this.useAwpGlb) {
+      this._loadAwpDragonLoreGLB();
+    } else {
       if (this.activeCustomMesh) this.activeCustomMesh.visible = false;
       let mesh = this.customGunCache.get(wDef.id);
       if (!mesh) {
@@ -744,6 +789,7 @@ export class ViewModel {
       this.vandalInspectHeld = false;
       this.customInspectHeld = false;
       this.customInspectT = -1;
+      if (w === 2) this.butterfly.ensureLoaded();
       if (w !== 2) this.butterfly.setInspect(false);
       if (w !== 1 && (this.awmActiveName === 'reload' || this.awmActiveName === 'inspect')) {
         this._playAwmClip('idle', 0.05, true);

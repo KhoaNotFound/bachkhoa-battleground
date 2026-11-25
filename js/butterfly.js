@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLB, warmUpModel, disposeObject3D } from './glb-loader.js';
 import { clamp, damp } from './util.js';
 
 // Gravity constant in m/s^2 (scaled for responsive first-person feel)
@@ -68,10 +68,12 @@ export function buildThirdPersonButterfly() {
  * - Frame-accurate metallic tang-pin clack audio synced to Blender keyframe timings
  */
 export class ButterflyController {
-  constructor(sleeveMat, skinMat, audio = null) {
+  constructor(sleeveMat, skinMat, audio = null, gpu = null) {
     this.audio = audio;
     this.sleeveMat = sleeveMat;
     this.skinMat = skinMat;
+    this._gpu = gpu;
+    this._loading = false;
 
     this.group = new THREE.Group();
     // Layer 1 physics pivot: all procedural inertia, gravity tilt, and locomotion gait live here
@@ -146,7 +148,11 @@ export class ButterflyController {
     this._fEff = new THREE.Vector3();
 
     this._createFallbackRig(sleeveMat, skinMat);
-    this._loadGLB();
+    // Lazy-loaded when knife is equipped/drawn or preloaded during lobby idle
+  }
+
+  ensureLoaded() {
+    if (!this.loaded && !this._loading) this._loadGLB();
   }
 
   _createFallbackRig(sleeveMat, skinMat) {
@@ -196,69 +202,74 @@ export class ButterflyController {
     mat.needsUpdate = true;
   }
 
-  _loadGLB() {
-    const loader = new GLTFLoader();
-    loader.load(
-      'assets/butterfly-viewmodel.glb',
-      (gltf) => {
-        const root = gltf.scene;
-        root.traverse((o) => {
-          if (o.isMesh) {
-            o.frustumCulled = false;
-            o.castShadow = false;
-            o.receiveShadow = false;
-            if (Array.isArray(o.material)) {
-              for (let i = 0; i < o.material.length; i++) this._tuneMaterial(o.material[i]);
-            } else {
-              this._tuneMaterial(o.material);
-            }
-          }
-        });
-
-        this.handBone = root.getObjectByName('Hand') || null;
-        this.knifePivot = root.getObjectByName('KnifePivot') || null;
-        this.safePin = root.getObjectByName('SafePinBone') || null;
-        this.bitePin = root.getObjectByName('BitePinBone') || null;
-
-        if (this.fallbackGroup) {
-          this.fallbackGroup.removeFromParent();
-          this.fallbackGroup = null;
-        }
-        this.modelRoot.add(root);
-
-        this.mixer = new THREE.AnimationMixer(root);
-        for (const name of REQUIRED_CLIPS) {
-          const clip = THREE.AnimationClip.findByName(gltf.animations, name);
-          if (!clip) {
-            console.warn(`butterfly-viewmodel.glb missing expected NLA clip: ${name}`);
-            continue;
-          }
-          const action = this.mixer.clipAction(clip);
-          if (LOOP_CLIPS.has(name)) {
-            action.setLoop(THREE.LoopRepeat, Infinity);
+  async _loadGLB() {
+    if (this.loaded || this._loading) return;
+    this._loading = true;
+    try {
+      const gltf = await loadGLB('assets/butterfly-viewmodel.glb');
+      const root = gltf.scene;
+      root.visible = false;
+      root.traverse((o) => {
+        if (o.isMesh) {
+          o.frustumCulled = false;
+          o.castShadow = false;
+          o.receiveShadow = false;
+          if (Array.isArray(o.material)) {
+            for (let i = 0; i < o.material.length; i++) this._tuneMaterial(o.material[i]);
           } else {
-            action.setLoop(THREE.LoopOnce, 1);
-            action.clampWhenFinished = true;
+            this._tuneMaterial(o.material);
           }
-          this.actions[name] = action;
         }
+      });
 
-        this.mixer.addEventListener('finished', (e) => {
-          if (e.action === this.activeAction && e.action !== this.actions.idle) {
-            this._playClip(this.inspectHeld ? 'inspect' : 'idle', 0.10, true);
-          }
-        });
-
-        this.loaded = true;
-        const startName = this.pendingClip && this.actions[this.pendingClip] ? this.pendingClip : 'idle';
-        this._playClip(startName, 0, true);
-        if (this.debugAxesEnabled) this.setDebugAxes(true);
-      },
-      undefined,
-      (err) => {
-        console.warn('Could not load assets/butterfly-viewmodel.glb, keeping fallback mesh:', err);
+      if (this._gpu?.renderer) {
+        await warmUpModel(this._gpu.renderer, this._gpu.scene, this._gpu.camera, root, { lowGfx: this._gpu.lowGfx });
       }
-    );
+
+      this.handBone = root.getObjectByName('Hand') || null;
+      this.knifePivot = root.getObjectByName('KnifePivot') || null;
+      this.safePin = root.getObjectByName('SafePinBone') || null;
+      this.bitePin = root.getObjectByName('BitePinBone') || null;
+
+      if (this.fallbackGroup) {
+        this.fallbackGroup.removeFromParent();
+        disposeObject3D(this.fallbackGroup);
+        this.fallbackGroup = null;
+      }
+      root.visible = true;
+      this.modelRoot.add(root);
+
+      this.mixer = new THREE.AnimationMixer(root);
+      for (const name of REQUIRED_CLIPS) {
+        const clip = THREE.AnimationClip.findByName(gltf.animations, name);
+        if (!clip) {
+          console.warn(`butterfly-viewmodel.glb missing expected NLA clip: ${name}`);
+          continue;
+        }
+        const action = this.mixer.clipAction(clip);
+        if (LOOP_CLIPS.has(name)) {
+          action.setLoop(THREE.LoopRepeat, Infinity);
+        } else {
+          action.setLoop(THREE.LoopOnce, 1);
+          action.clampWhenFinished = true;
+        }
+        this.actions[name] = action;
+      }
+
+      this.mixer.addEventListener('finished', (e) => {
+        if (e.action === this.activeAction && e.action !== this.actions.idle) {
+          this._playClip(this.inspectHeld ? 'inspect' : 'idle', 0.10, true);
+        }
+      });
+
+      this.loaded = true;
+      const startName = this.pendingClip && this.actions[this.pendingClip] ? this.pendingClip : 'idle';
+      this._playClip(startName, 0, true);
+      if (this.debugAxesEnabled) this.setDebugAxes(true);
+    } catch (err) {
+      this._loading = false;
+      console.warn('Could not load assets/butterfly-viewmodel.glb, keeping fallback mesh:', err);
+    }
   }
 
   _playClip(name, fadeSec = 0.08, forceRestart = true) {
