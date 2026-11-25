@@ -6,7 +6,10 @@ import { buildGate } from './landmarks.js';
 
 // Map loaded from the campus OBJ export, converted by tools/build_obj_map.py into
 // assets/map/campus.{bin,json} + minimap.png. Coordinates are meters, Y up.
-const BASE = new URL('../assets/map/', import.meta.url);
+// ?map=review loads the map under review instead (assets/map-review/, built from the map.blend
+// pipeline: tools/build_buildings.py -> build_obj_map.py --out assets/map-review). Same format.
+export const REVIEW_MAP = new URLSearchParams(location.search).get('map') === 'review';
+const BASE = new URL(REVIEW_MAP ? '../assets/map-review/' : '../assets/map/', import.meta.url);
 
 // Filled in by buildMap() before anything reads them (HUD and main use them after boot).
 export const BOUNDS = { x0: -1, z0: -1, x1: 1, z1: 1 };
@@ -21,12 +24,12 @@ function edgeRect(a, u, n, s0, s1, o0, o1) {
 
 export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}) {
   const [meta, bin] = await Promise.all([
-    fetch(new URL('campus.json?v=2', BASE)).then((r) => r.json()),
-    fetch(new URL('campus.bin?v=2', BASE)).then((r) => r.arrayBuffer()),
+    fetch(new URL('campus.json?v=4', BASE)).then((r) => r.json()),
+    fetch(new URL('campus.bin?v=4', BASE)).then((r) => r.arrayBuffer()),
   ]);
   onProgress?.(35);
   const mmImg = new Image();
-  mmImg.src = new URL('minimap.png?v=2', BASE).href;
+  mmImg.src = new URL('minimap.png?v=5', BASE).href;
   const mmReady = mmImg.decode().catch(() => null);
 
   [BOUNDS.x0, BOUNDS.z0, BOUNDS.x1, BOUNDS.z1] = meta.bbox;
@@ -81,12 +84,14 @@ export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}
     if (uv) g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     g.computeBoundingSphere();
     // mixed winding in the export -> draw both sides
+    const transparent = mt.opacity != null && mt.opacity < 1;
     const mat = new THREE.MeshLambertMaterial(textured
       ? { map: texFor[mt.kind](mt), side: THREE.DoubleSide }
       : { color: mt.color, side: THREE.DoubleSide });
     if (mt.ground) Object.assign(mat, { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    if (transparent) Object.assign(mat, { transparent: true, opacity: mt.opacity, depthWrite: false });
     const m = new THREE.Mesh(g, mat);
-    m.castShadow = !mt.ground && !lowGfx;
+    m.castShadow = !mt.ground && !transparent && !lowGfx;
     m.receiveShadow = true;
     scene.add(m);
     meshes.push(m);
@@ -108,7 +113,7 @@ export async function buildMap(scene, world, { lowGfx = false, onProgress } = {}
   // movement-only boxes over unreachable surfaces and ceilings over open sky.
   {
     const c = meta.collision, g = meta.grid;
-    const buf = await fetch(new URL(c.file, BASE)).then((r) => r.arrayBuffer());
+    const buf = await fetch(new URL(`${c.file}?v=4`, BASE)).then((r) => r.arrayBuffer());
     const q = new Int16Array(buf), U = c.unit;
     for (let i = 0, n = 0; i < q.length; i += 6, n++) {
       const solid = n < c.solid;

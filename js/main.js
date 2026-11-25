@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CollisionWorld, Mover } from './physics.js';
-import { buildMap, BOUNDS } from './map.js';
+import { buildMap, BOUNDS, REVIEW_MAP } from './map.js';
 import { Avatar, Debris, rayPlayer } from './avatar.js';
 import { ViewModel } from './viewmodel.js';
 import { VFX } from './vfx.js';
@@ -9,7 +9,10 @@ import { Net } from './net.js';
 import { HUD } from './hud.js';
 import { Inspector, loadAdminKey, verifyAdminKey } from './admin.js';
 import { Chat, RateLimit, cleanChat } from './chat.js';
-import { WEAPONS, isGun, weaponSpeedMult, adsSpeedMult, drawTime, spreadOf, Recoil } from './weapons.js';
+import { WEAPONS, getWeapon } from './weapons.js';
+import { BuyMenu } from './shop.js';
+import { CollectionUI } from './collection.js';
+import { getEquippedSkin, isSkinOwned, equipSkin, unlockAllSkins, unlockSkin, resetSkins } from './skins.js';
 import { clamp, damp, lerp, lerpAngle, angleDiff, cleanName, escapeHtml, r2, r3 } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -19,9 +22,7 @@ const COLORS = ['#1e88e5', '#e53935', '#43a047', '#fdd835', '#8e24aa', '#fb8c00'
 
 // ---------------- weapons tuning ----------------
 const FIST = { dmg: 25, head: 35, range: 2.7, cd: 420 };
-const AWM = WEAPONS[1];
-const WEAPON_ORDER = [0, 1, 2, 3, 4, 5];
-const recoil = new Recoil();
+const AWM = { head: 250, body: 85, legs: 65, mag: 5, cd: 1350, reload: 2800, switch: 550 };
 const KNIFE = { dmg: 45, head: 70, heavyDmg: 75, heavyHead: 110, range: 2.9, cd: 380, heavyCd: 680, switch: 520 };
 const MAX_HP = 100;
 const KILL_HEAL = 25;
@@ -95,10 +96,9 @@ function setShadowArea(r) {
 setShadowArea(75);
 
 // ---------------- day / night ----------------
-// One cycle every 10 real minutes, from the wall clock so every player sees the same time.
-// Phase 0 = sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight. ?daytime=0.75 forces a phase (testing).
+// Default to bright daytime (phase 0.16 = 09:50) in normal battle mode; night/cycle can still be enabled via admin commands (/night, /time, /auto) or ?daytime=.
 const DAY_MS = 10 * 60 * 1000;
-let forcedPhase = qs.has('daytime') ? (+qs.get('daytime') % 1 + 1) % 1 : null;
+let forcedPhase = qs.has('daytime') ? (+qs.get('daytime') % 1 + 1) % 1 : 0.16;
 const TIME_PRESETS = {
   day:      { ph: 0.16, label: 'Buổi sáng (Day · 09:50)' },
   morning:  { ph: 0.16, label: 'Buổi sáng (Day · 09:50)' },
@@ -206,20 +206,112 @@ function updateDayNight() {
 // ---------------- systems ----------------
 const world = new CollisionWorld(8);
 const mover = new Mover(world);
-let map, hud, vm, vfx, debris;
+let map, hud, vm, vfx, debris, buyMenu, collectionUI;
 const audio = new Audio();
 audio.setVolume(settings.vol);
-const net = new Net(qs.get('room'));
+// the review map gets its own rooms, so its players never mix with the ones on the live map
+const net = new Net(REVIEW_MAP ? 'review-' + (qs.get('room') || 'main') : qs.get('room'));
+if (REVIEW_MAP) {
+  document.title = 'Bách Khoa Battleground · Thử map mới';
+  const sub = document.querySelector('.brand .sub');
+  if (sub) sub.textContent = 'Chế độ thử map mới (map.blend) · Đấu tự do · Mỗi người 100 HP';
+  const tip = $('mapModeTip');
+  if (tip) tip.innerHTML = '<a href="./" style="color:#a8e6ff">← Quay lại map cũ</a> (phòng chơi riêng, không chung với map cũ).';
+}
 const peers = new Map();
+const dummies = new Map();
+let dummySeq = 0;
+
+function makeInitialAmmoMap() {
+  const m = Object.create(null);
+  for (const id in WEAPONS) {
+    if (typeof WEAPONS[id].mag === 'number') m[id] = WEAPONS[id].mag;
+  }
+  return m;
+}
+
+function resolveEquippedMelee() {
+  const skin = getEquippedSkin('knife');
+  return skin && skin.meleeType === 'knife' ? 'knife' : 'fist';
+}
 
 // ---------------- local player ----------------
 const me = {
-  name: '', color: settings.color, alive: false, hp: MAX_HP, kills: 0, deaths: 0,
+  name: '', color: settings.color, alive: false, hp: MAX_HP, kills: 0, deaths: 0, killStreak: 0,
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), onGround: false,
-  yaw: 0, pitch: 0, crouching: false, crouchV: 0, sprint: false, weapon: 1, lastWeapon: 2, ammo: AWM.mag, mags: { 1: WEAPONS[1].mag, 3: WEAPONS[3].mag, 4: WEAPONS[4].mag, 5: WEAPONS[5].mag },
-  nextFire: 0, reloadEnd: 0, reloadStart: 0, switchUntil: 0, ads: 0, protectedUntil: 0,
+  yaw: 0, pitch: 0, crouching: false, crouchV: 0, sprint: false,
+  slot: 1, lastSlot: 3, weapon: 1, lastWeapon: 2, ammo: AWM.mag,
+  loadout: {
+    primary: settings.primary && WEAPONS[settings.primary]?.slot === 'primary' ? settings.primary : 'operator',
+    secondary: settings.secondary && WEAPONS[settings.secondary]?.slot === 'secondary' ? settings.secondary : 'classic',
+    melee: resolveEquippedMelee(),
+  },
+  ammoMap: makeInitialAmmoMap(),
+  nextFire: 0, reloadEnd: 0, reloadStart: 0, reloadDurMs: AWM.reload, switchUntil: 0, ads: 0, protectedUntil: 0,
   lastDamage: 0, recoil: 0, shake: 0, stepAcc: 0, landDip: 0, jumpImpulse: 0, landImpulse: 0, killerId: null,
 };
+function activeWeaponId() {
+  return me.slot === 1 ? me.loadout.primary : me.slot === 2 ? me.loadout.secondary : me.loadout.melee;
+}
+function activeWeaponDef() {
+  return getWeapon(activeWeaponId());
+}
+function activeVmSlot() {
+  if (me.slot === 3) return me.loadout.melee === 'knife' ? 2 : 0;
+  return 1;
+}
+function syncHudLoadout() {
+  const w = activeWeaponDef();
+  me.weapon = activeVmSlot();
+  if (typeof w.mag === 'number') {
+    if (me.ammoMap[w.id] === undefined) me.ammoMap[w.id] = w.mag;
+    me.ammo = me.ammoMap[w.id];
+  }
+  if (hud) hud.setLoadout(me.loadout, me.slot, me.ammoMap);
+}
+function toggleBuyMenu(forceState = null) {
+  if (!buyMenu || state !== 'playing' || !me.alive) return;
+  const next = forceState === null ? !buyMenu.open : !!forceState;
+  if (next === buyMenu.open) return;
+  if (next) {
+    for (const k in keys) keys[k] = false;
+    firing = false;
+    adsHeld = false;
+    hud.setScope(false);
+    buyMenu.setOpen(true);
+    if (document.pointerLockElement) document.exitPointerLock();
+  } else {
+    buyMenu.setOpen(false);
+    lockPointer();
+  }
+}
+function equipFromShop(w) {
+  if (!w) return;
+  audio.ui();
+  if (w.slot === 'primary') {
+    me.loadout.primary = w.id;
+    settings.primary = w.id;
+    me.ammoMap[w.id] = w.mag;
+    saveSettings();
+    switchWeapon(1, true);
+  } else if (w.slot === 'secondary') {
+    me.loadout.secondary = w.id;
+    settings.secondary = w.id;
+    me.ammoMap[w.id] = w.mag;
+    saveSettings();
+    switchWeapon(2, true);
+  } else if (w.slot === 'melee') {
+    if (w.id === 'knife' && !isSkinOwned('knife', 'knife_butterfly')) {
+      chat?.system('[Bộ Sưu Tập] Dao Butterfly đang bị khóa! Mở khóa trong Bộ Sưu Tập (hoặc dùng /unlock all).');
+      return;
+    }
+    equipSkin('knife', w.id === 'knife' ? 'knife_butterfly' : 'knife_default');
+    me.loadout.melee = w.id === 'knife' ? 'knife' : 'fist';
+    settings.melee = me.loadout.melee;
+    saveSettings();
+    switchWeapon(3, true);
+  }
+}
 let state = 'loading';
 const keys = {};
 let mouseDX = 0, mouseDY = 0, lookDX = 0, lookDY = 0;
@@ -236,11 +328,17 @@ const feed = [];
     setLoad(55, 'Đang chuẩn bị vũ khí…');
     await nextFrame();
     hud = new HUD(map.minimap);
+    buyMenu = new BuyMenu({
+      onSelect: (w) => equipFromShop(w),
+      onClose: () => { if (state === 'playing' && me.alive && !chat?.open) lockPointer(); },
+      getLoadout: () => ({ ...me.loadout, activeWeaponId: activeWeaponId() }),
+    });
     chat = new Chat({
       onSend: (text) => { net.send({ t: 'chat', m: text }); chat.add(myName(), me.color, text, true); },
       onCommand: (cmdText) => handleChatCommand(cmdText),
       onOpenChange: (open) => {
         if (open) {
+          if (buyMenu?.open) buyMenu.setOpen(false);
           for (const k in keys) keys[k] = false;
           if (inspector) inspector.keys = {};
           firing = false;
@@ -248,14 +346,37 @@ const feed = [];
         }
       },
     });
-    vm = new ViewModel(renderer, audio);
+    vm = new ViewModel(renderer, audio, { lowGfx: settings.low });
     vm.setColor(me.color);
+    const bootPrimary = getWeapon(me.loadout.primary);
+    vm.setGunDef(bootPrimary, getEquippedSkin(bootPrimary.id));
+    collectionUI = new CollectionUI({
+      onSound: () => audio.ui(),
+      onEquipSkin: (weaponId, skinDef) => {
+        if (weaponId === 'knife') {
+          me.loadout.melee = skinDef?.meleeType === 'knife' ? 'knife' : 'fist';
+          settings.melee = me.loadout.melee;
+          saveSettings();
+          if (me.slot === 3 && me.alive) switchWeapon(3, true);
+          else syncHudLoadout();
+          return;
+        }
+        if (vm && vm.gunDef && vm.gunDef.id === weaponId) {
+          vm.setGunDef(vm.gunDef, skinDef);
+        }
+      },
+    });
     vfx = new VFX(scene);
     vfx.setScale(window.innerHeight);
     debris = new Debris(scene);
     onResize();
-    // warm up shaders
+    // warm up shaders (world + viewmodel)
     renderer.compile(scene, camera);
+    if (typeof renderer.compileAsync === 'function') {
+      renderer.compileAsync(vm.scene, vm.camera).catch(() => {});
+    } else {
+      renderer.compile(vm.scene, vm.camera);
+    }
     setLoad(75, 'Đang kết nối máy chủ…');
     setupLobby();
     lobbyCam(0);
@@ -267,6 +388,14 @@ const feed = [];
     $('lobby').classList.remove('hidden');
     state = 'lobby';
     connectNet();
+
+    // Idle preload equipped secondary & melee models in Lobby so spawning is instant
+    const scheduleIdle = window.requestIdleCallback || ((cb) => setTimeout(cb, 450));
+    scheduleIdle(() => {
+      const secSkin = getEquippedSkin(me.loadout.secondary);
+      if (secSkin?.glb) vm.preloadSkin(secSkin.glb);
+      if (me.loadout.melee === 'knife') vm.butterfly.ensureLoaded();
+    });
   } catch (e) {
     console.error(e);
     setLoad(100, 'Lỗi khi tải game: ' + e.message);
@@ -326,7 +455,9 @@ function setupLobby() {
   const low = $('lowGfx');
   low.checked = settings.low;
   low.onchange = () => { settings.low = low.checked; saveSettings(); location.reload(); };
-  $('playBtn').onclick = () => { if (!net.connected) return; audio.init(); audio.ui(); spawn(); };
+  $('playBtn').onclick = () => { if (!net.connected) return; collectionUI?.setOpen(false); audio.init(); audio.ui(); spawn(); };
+  const colBtn = $('collectionBtn');
+  if (colBtn) colBtn.onclick = () => { audio.init(); audio.ui(); collectionUI?.setOpen(true); };
   $('resumeBtn').onclick = () => { lockPointer(); };
   // admin: free camera to inspect the map (name + key, see admin.js)
   inspector = new Inspector({
@@ -378,6 +509,37 @@ function handleChatCommand(rawText) {
     return true;
   }
 
+  if (cmd === 'dummy' || cmd === 'bot') {
+    const sub = (args[0] || '').toLowerCase();
+    if (sub === 'clear' || sub === 'del' || sub === 'remove' || sub === '0') {
+      const removed = clearDummies();
+      chat?.system(`[Dummy] Đã xoá ${removed} dummy tập bắn.`);
+      return true;
+    }
+    if (state !== 'playing' || !me.alive) {
+      chat?.system('[Dummy] Hãy vào trận (VÀO TRẬN) trước khi gọi /dummy.');
+      return true;
+    }
+    const count = args.length && Number.isFinite(+args[0]) ? clamp(Math.round(+args[0]), 1, 10) : 1;
+    const spawned = spawnDummy(count);
+    chat?.system(`[Dummy] Đã spawn ${spawned} dummy phía trước bạn (tổng ${dummies.size} dummy · bắn hạ để kích hoạt Kill Effect!).`);
+    return true;
+  }
+
+  if (cmd === 'killfx' || cmd === 'killeffect') {
+    const sub = (args[0] || '').toLowerCase();
+    if (sub === 'reset' || sub === '0' || sub === 'off') {
+      me.killStreak = 0;
+      hud?.resetKillEffect();
+      chat?.system('[KillFX] Đã reset chuỗi hạ gục liên tiếp về 0.');
+      return true;
+    }
+    const n = args.length && Number.isFinite(+args[0]) ? clamp(Math.round(+args[0]), 1, 99) : null;
+    const tier = triggerKillStreak(n);
+    chat?.system(`[KillFX] Kích hoạt hiệu ứng hạ gục liên tiếp #${me.killStreak} (clip kill_${tier}.mp4).`);
+    return true;
+  }
+
   if (cmd === 'admin') {
     const keyArg = args.join(' ');
     if (!keyArg && isAdmin()) {
@@ -398,10 +560,13 @@ function handleChatCommand(rawText) {
 
   if (cmd === 'help' || cmd === '?') {
     if (!isAdmin()) {
-      chat?.system('Lệnh cơ bản: /clear (xoá khung chat), /admin <key> (mở quyền Admin).');
+      chat?.system('Lệnh cơ bản: /dummy [số|clear] (spawn mục tiêu tập bắn), /killfx [1..6|reset] (thử hiệu ứng hạ gục), /clear (xoá chat), /admin <key>.');
       return true;
     }
     chat?.system('=== LỆNH ADMIN (BÁCH KHOA BATTLEGROUND) ===');
+    chat?.system('• /dummy [1..10|clear] : Spawn mục tiêu tập bắn phía trước (bắn hạ để test Kill Effect)');
+    chat?.system('• /killfx [1..6|reset] : Kích hoạt hoặc reset chuỗi hiệu ứng hạ gục Valorant (1 -> 6+)');
+    chat?.system('• /unlock all | /unlock <id> | /lock all : Mở khóa hoặc khóa lại toàn bộ skin trong Bộ Sưu Tập');
     chat?.system('• /time set <day|noon|sunset|night|sunrise|midnight|auto|0..24h> : Đổi buổi sáng/trưa/chiều/tối');
     chat?.system('• /day, /noon, /sunset, /night, /sunrise : Phím tắt đổi nhanh thời gian');
     chat?.system('• /fly hoặc /inspect : Bật/tắt camera bay tự do (Inspector)');
@@ -414,6 +579,35 @@ function handleChatCommand(rawText) {
   if (!isAdmin()) {
     chat?.system('[Admin] Bạn cần quyền Admin để dùng lệnh này. (Dùng ?admin=<key> hoặc /admin <key>)');
     return true;
+  }
+
+  if (cmd === 'unlock') {
+    const target = args.join(' ').trim().toLowerCase();
+    if (!target || target === 'all' || target === '*') {
+      const n = unlockAllSkins();
+      chat?.system(`[Admin] Đã mở khóa toàn bộ skin trong Bộ Sưu Tập${n ? ` (+${n} skin mới)` : ' (tất cả đã được mở từ trước)'}!`);
+      return true;
+    }
+    const found = unlockSkin(target);
+    if (found) chat?.system(`[Admin] Đã mở khóa skin: ${found.name}.`);
+    else chat?.system(`[Admin] Không tìm thấy skin "${target}". Dùng /unlock all để mở tất cả.`);
+    return true;
+  }
+
+  if (cmd === 'lock') {
+    const target = (args[0] || 'all').toLowerCase();
+    if (target === 'all' || target === 'reset') {
+      resetSkins();
+      me.loadout.melee = resolveEquippedMelee();
+      settings.melee = me.loadout.melee;
+      saveSettings();
+      const curW = activeWeaponDef();
+      if (me.slot === 3 && me.alive) switchWeapon(3, true);
+      else if (vm && curW && activeVmSlot() === 1) vm.setGunDef(curW, getEquippedSkin(curW.id));
+      syncHudLoadout();
+      chat?.system('[Admin] Đã khóa lại toàn bộ skin chưa sở hữu (chỉ giữ skin Mặc định).');
+      return true;
+    }
   }
 
   // /day, /night, /noon, /sunrise, /sunset, /midnight, /auto shortcuts
@@ -549,15 +743,119 @@ function handleChatCommand(rawText) {
   // /ammo
   if (cmd === 'ammo') {
     me.infAmmo = !me.infAmmo;
-    me.ammo = isGun(me.weapon) ? WEAPONS[me.weapon].mag : 0;
+    me.ammoMap = makeInitialAmmoMap();
     me.reloadEnd = 0;
-    if (hud) { hud.setWeapon(me.weapon, me.ammo); hud.setReload(-1); }
-    chat?.system(`[Admin] Đạn vô hạn (Infinite Ammo): ${me.infAmmo ? 'BẬT' : 'TẮT'} (Đã nạp đầy ${me.ammo} viên)`);
+    syncHudLoadout();
+    if (hud) hud.setReload(-1);
+    chat?.system(`[Admin] Đạn vô hạn (Infinite Ammo): ${me.infAmmo ? 'BẬT' : 'TẮT'} (Đã nạp đầy tất cả súng)`);
     return true;
   }
 
   chat?.system(`[Admin] Không rõ lệnh "/${cmd}". Gõ /help để xem danh sách lệnh.`);
   return true;
+}
+
+function triggerKillStreak(streak = null) {
+  if (streak !== null && Number.isFinite(+streak)) {
+    me.killStreak = Math.max(1, Math.round(+streak));
+  } else {
+    me.killStreak = (me.killStreak || 0) + 1;
+  }
+  const tier = Math.max(1, Math.min(6, me.killStreak));
+  if (hud) {
+    hud.show(true);
+    hud.hit('kill');
+    hud.showKillEffect(tier, settings.vol, () => audio.kill());
+  }
+  return tier;
+}
+
+// ---------------- practice dummies (/dummy) ----------------
+function groundHeightAt(x, z, refY = 0) {
+  // Cast straight down from above player's elevation to find the campus floor / rooftop
+  const topY = Math.max(refY + 6, 12);
+  const hit = world.raycast(new THREE.Vector3(x, topY, z), new THREE.Vector3(0, -1, 0), topY + 2, () => true);
+  return hit ? Math.max(0, topY - hit.t) : 0;
+}
+function spawnDummy(count = 1) {
+  const n = clamp(Math.round(count) || 1, 1, 10);
+  const fwdX = -Math.sin(me.yaw), fwdZ = -Math.cos(me.yaw);
+  const rightX = Math.cos(me.yaw), rightZ = -Math.sin(me.yaw);
+  const baseDist = 11;
+  let created = 0;
+  for (let i = 0; i < n; i++) {
+    const spreadIdx = i - (n - 1) / 2;
+    const lateral = spreadIdx * 2.2;
+    const dist = baseDist + Math.abs(spreadIdx) * 0.45;
+    let x = clamp(me.pos.x + fwdX * dist + rightX * lateral, BOUNDS.x0 + 2, BOUNDS.x1 - 2);
+    let z = clamp(me.pos.z + fwdZ * dist + rightZ * lateral, BOUNDS.z0 + 2, BOUNDS.z1 - 2);
+    // Keep dummy outside walls if raycast hits something closer along the spawn line
+    const dir = new THREE.Vector3(x - me.pos.x, 0, z - me.pos.z);
+    const dLen = dir.length();
+    if (dLen > 0.5) {
+      dir.divideScalar(dLen);
+      const wallHit = world.raycast(new THREE.Vector3(me.pos.x, me.pos.y + 1.2, me.pos.z), dir, dLen, () => true);
+      if (wallHit && wallHit.t > 2.2) {
+        const safeT = Math.max(2.0, wallHit.t - 1.0);
+        x = me.pos.x + dir.x * safeT;
+        z = me.pos.z + dir.z * safeT;
+      }
+    }
+    const y = groundHeightAt(x, z, me.pos.y);
+    const id = 'dummy_' + (++dummySeq);
+    const label = `Dummy #${dummySeq}`;
+    const yaw = Math.atan2(me.pos.x - x, me.pos.z - z);
+    const av = new Avatar(`${label} · ${MAX_HP} HP`, '#ff8f00');
+    av.update(0.016, { x, y, z, yaw, pitch: 0, speed: 0, crouch: false, weapon: 0, protected: false });
+    scene.add(av.root);
+    vfx.spawnFx(new THREE.Vector3(x, y, z));
+    dummies.set(id, {
+      id, name: label, color: '#ff8f00', isDummy: true, alive: true, hp: MAX_HP, maxHp: MAX_HP,
+      pose: { x, y, z, yaw, pitch: 0, crouch: false },
+      avatar: av, protected: false,
+    });
+    created++;
+  }
+  return created;
+}
+function clearDummies() {
+  const n = dummies.size;
+  for (const d of dummies.values()) {
+    if (d.avatar) d.avatar.dispose();
+  }
+  dummies.clear();
+  return n;
+}
+function damageDummy(dummy, dmg, head, weaponId, dist) {
+  if (!dummy || !dummy.alive) return;
+  dummy.hp = Math.max(0, dummy.hp - dmg);
+  if (dummy.hp > 0) {
+    if (dummy.avatar) dummy.avatar.setName(`${dummy.name} · ${Math.ceil(dummy.hp)} HP`, dummy.color);
+    hud.hit(head ? 'head' : 'body');
+    audio.hitmarker(head);
+    return;
+  }
+  // Dummy eliminated! Trigger full kill effect + streak + debris + heal
+  dummy.alive = false;
+  const dir = dummy.pose ? new THREE.Vector3(dummy.pose.x - me.pos.x, 0, dummy.pose.z - me.pos.z).normalize() : null;
+  if (dummy.avatar) {
+    debris.burst(dummy.avatar, dir);
+    vfx.deathFx(dummy.avatar.root.position);
+    audio.oof(dummy.avatar.root.position);
+    dummy.avatar.dispose();
+    dummy.avatar = null;
+  }
+  dummies.delete(dummy.id);
+  me.kills++;
+  me.killStreak = (me.killStreak || 0) + 1;
+  me.hp = Math.min(MAX_HP, me.hp + KILL_HEAL);
+  hud.setHP(me.hp);
+  hud.hit('kill');
+  const tier = Math.max(1, Math.min(6, me.killStreak));
+  hud.showKillEffect(tier, settings.vol, () => audio.kill());
+  const streakLabel = me.killStreak === 5 ? 'ACE (5 MẠNG) · ' : me.killStreak >= 6 ? `CHUỖI ${me.killStreak} MẠNG · ` : me.killStreak > 1 ? `MẠNG LIÊN TIẾP #${me.killStreak} · ` : '';
+  hud.center(`HẠ GỤC ${dummy.name.toUpperCase()}`, streakLabel + (head ? 'HEADSHOT · ' : '') + `+${KILL_HEAL} HP`, 'kill');
+  addKill({ name: myName(), color: me.color }, dummy, weaponId, head, true, dist);
 }
 
 // ---------------- spawn / death ----------------
@@ -575,11 +873,14 @@ function spawn() {
   me.vel.set(0, 0, 0);
   me.yaw = Math.atan2(pick.x, pick.z); // face campus centre
   me.pitch = 0;
-  me.hp = MAX_HP; me.mags = { 1: WEAPONS[1].mag, 3: WEAPONS[3].mag, 4: WEAPONS[4].mag, 5: WEAPONS[5].mag }; me.ammo = AWM.mag; recoil.reset(); me.weapon = 1; me.lastWeapon = 2; me.reloadEnd = 0; me.nextFire = 0; me.ads = 0;
-  me.alive = true; me.crouching = false; me.crouchV = 0; me.sprint = false; me.jumpImpulse = 0; me.landImpulse = 0;
+  me.ammoMap = makeInitialAmmoMap();
+  me.hp = MAX_HP; me.slot = 1; me.lastSlot = 3; me.reloadEnd = 0; me.nextFire = 0; me.ads = 0;
+  me.alive = true; me.killStreak = 0; me.crouching = false; me.crouchV = 0; me.sprint = false; me.jumpImpulse = 0; me.landImpulse = 0;
   me.protectedUntil = performance.now() + 2500;
   me.switchUntil = 0; me.lastDamage = 0; me.recoil = 0;
-  vm.setWeapon(1); vm.switchT = 0;
+  const startGun = getWeapon(me.loadout.primary);
+  vm.setGunDef(startGun, getEquippedSkin(startGun.id));
+  vm.setWeapon(1, true); vm.switchT = 0;
   state = 'playing';
   net.send({ t: 'spawn', p: [r2(me.pos.x), r2(me.pos.y), r2(me.pos.z)] });
   sendHello();
@@ -588,10 +889,12 @@ function spawn() {
   audio.spawn();
   $('lobby').classList.add('hidden');
   $('death').classList.add('hidden');
+  if (buyMenu?.open) buyMenu.setOpen(false);
+  hud.resetKillEffect();
   hud.show(true);
   hud.setHP(me.hp);
-  hud.setWeapon(me.weapon, me.ammo);
-  hud.center('VÀO TRẬN!', 'Hạ gục đối thủ để hồi 25 HP');
+  syncHudLoadout();
+  hud.center('VÀO TRẬN!', 'Ấn B mở bảng mua súng · /dummy để tạo mục tiêu');
   lockPointer();
 }
 function lockPointer() {
@@ -604,16 +907,18 @@ function lockPointer() {
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === canvas;
   if (locked) $('pause').classList.add('hidden');
-  else if (state === 'playing' && !chat?.open) { $('pause').classList.remove('hidden'); firing = false; adsHeld = false; for (const k in keys) keys[k] = false; }
+  else if (state === 'playing' && !chat?.open && !buyMenu?.open) { $('pause').classList.remove('hidden'); firing = false; adsHeld = false; for (const k in keys) keys[k] = false; }
 });
-document.addEventListener('pointerlockerror', () => { if (state === 'playing') $('pause').classList.remove('hidden'); });
+document.addEventListener('pointerlockerror', () => { if (state === 'playing' && !buyMenu?.open && !chat?.open) $('pause').classList.remove('hidden'); });
 
 function die(killerId, m) {
   if (!me.alive) return;
   me.alive = false;
   me.hp = 0;
   me.deaths++;
+  me.killStreak = 0;
   state = 'dead';
+  if (buyMenu?.open) buyMenu.setOpen(false);
   deathStart = performance.now();
   deathUntil = deathStart + 4200;
   deathPos.copy(me.pos);
@@ -625,19 +930,15 @@ function die(killerId, m) {
   if (killer) killer.kills++;
   audio.death();
   vfx.deathFx(me.pos);
+  hud.resetKillEffect();
   hud.show(false);
   hud.setScope(false);
   hud.drawBigMap(false);
   $('pause').classList.add('hidden');
   $('death').classList.remove('hidden');
   $('deathBy').innerHTML = killer ? `bởi <span style="color:${killer.color}">${escapeHtml(killer.name)}</span>` : '';
-  $('deathInfo').textContent = [weaponLabel(m.w), m.hs ? 'Headshot' : '', m.dist ? `${Math.round(m.dist)} m` : ''].filter(Boolean).join(' · ');
-}
-function weaponLabel(w) {
-  if (w === 'fist') return 'Nắm đấm';
-  if (w === 'knife') return 'Dao Butterfly';
-  const g = Object.values(WEAPONS).find((x) => x.id === w);
-  return g ? g.name : 'AWM';
+  const wLabel = WEAPONS[m.w]?.name || (m.w === 'fist' ? 'Nắm đấm' : m.w === 'knife' ? 'Dao Butterfly' : 'AWM');
+  $('deathInfo').textContent = [wLabel, m.hs ? 'Headshot' : '', m.dist ? `${Math.round(m.dist)} m` : ''].filter(Boolean).join(' · ');
 }
 function leaveToLobby() {
   if (state === 'playing') {
@@ -645,7 +946,10 @@ function leaveToLobby() {
     net.send({ t: 'despawn' });
     sendHello();
   }
+  me.killStreak = 0;
   state = 'lobby';
+  if (buyMenu?.open) buyMenu.setOpen(false);
+  hud.resetKillEffect();
   hud.show(false);
   hud.setScope(false);
   $('pause').classList.add('hidden');
@@ -659,16 +963,15 @@ function leaveToLobby() {
 addEventListener('keydown', (e) => {
   if (e.target && e.target.tagName === 'INPUT') return;
   if (e.code === 'Tab') { e.preventDefault(); showBoard = true; }
+  if (e.code === 'Escape' && buyMenu?.open) { e.preventDefault(); toggleBuyMenu(false); return; }
+  if (e.code === 'KeyB' && !e.repeat && state === 'playing' && me.alive && !chat?.open) { e.preventDefault(); toggleBuyMenu(); return; }
   if ((e.code === 'Slash' || e.key === '/') && !e.repeat && chat && state !== 'loading') { e.preventDefault(); chat.toggleOpen(); return; }
-  if (state !== 'playing') return;
+  if (state !== 'playing' || buyMenu?.open) return;
   keys[e.code] = true;
-  if (e.code === 'Digit1') switchWeapon(0);
-  if (e.code === 'Digit2') switchWeapon(1);
-  if (e.code === 'Digit3') switchWeapon(2);
-  if (e.code === 'Digit4') switchWeapon(3);
-  if (e.code === 'Digit5') switchWeapon(4);
-  if (e.code === 'Digit6') switchWeapon(5);
-  if (e.code === 'KeyQ') switchWeapon(me.lastWeapon !== me.weapon ? me.lastWeapon : (me.weapon === 2 ? 1 : 2));
+  if (e.code === 'Digit1') switchWeapon(1);
+  if (e.code === 'Digit2') switchWeapon(2);
+  if (e.code === 'Digit3') switchWeapon(3);
+  if (e.code === 'KeyQ') switchWeapon(me.lastSlot !== me.slot ? me.lastSlot : (me.slot === 3 ? 1 : 3));
   if (e.code === 'KeyF' && !e.repeat) vm.setInspect(true);
   if (e.code === 'KeyR') startReload();
   if (e.code === 'Space' || e.code === 'KeyC') e.preventDefault();
@@ -680,24 +983,25 @@ addEventListener('keyup', (e) => {
 });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; firing = false; adsHeld = false; showBoard = false; if (vm) vm.setInspect(false); });
 addEventListener('mousemove', (e) => {
-  if (state !== 'playing') return;
+  if (state !== 'playing' || buyMenu?.open) return;
   if (document.pointerLockElement === canvas || TEST) { mouseDX += e.movementX || 0; mouseDY += e.movementY || 0; }
 });
 addEventListener('mousedown', (e) => {
-  if (chat?.open) return;
+  if (chat?.open || buyMenu?.open) return;
   if (state !== 'playing' || (document.pointerLockElement !== canvas && !TEST)) return;
   if (e.button === 0) { firing = true; tryFire(false); }
   if (e.button === 2) {
-    if (me.weapon === 2) tryFire(true);
-    else { adsHeld = true; if (vm) vm.setInspect(false); }
+    if (me.slot === 3 && me.loadout.melee === 'knife') tryFire(true);
+    else if (me.slot !== 3) { adsHeld = true; if (vm) vm.setInspect(false); }
   }
 });
 addEventListener('mouseup', (e) => { if (e.button === 0) firing = false; if (e.button === 2) adsHeld = false; });
 addEventListener('contextmenu', (e) => e.preventDefault());
 addEventListener('wheel', (e) => {
-  if (state === 'playing' && document.pointerLockElement === canvas) {
+  if (state === 'playing' && !buyMenu?.open && document.pointerLockElement === canvas) {
     const dir = e.deltaY > 0 ? 1 : -1;
-    switchWeapon(WEAPON_ORDER[(WEAPON_ORDER.indexOf(me.weapon) + dir + WEAPON_ORDER.length) % WEAPON_ORDER.length]);
+    const next = ((me.slot - 1 + dir + 3) % 3) + 1;
+    switchWeapon(next);
   }
 });
 addEventListener('resize', onResize);
@@ -711,40 +1015,54 @@ function onResize() {
 addEventListener('beforeunload', () => net.leave());
 
 // ---------------- weapons ----------------
-function switchWeapon(w) {
-  if (w === me.weapon || !me.alive) return;
-  if (isGun(me.weapon)) me.mags[me.weapon] = me.ammo;
-  me.lastWeapon = me.weapon;
-  me.weapon = w;
-  if (isGun(w)) me.ammo = me.mags[w];
-  recoil.reset();
-  me.switchUntil = performance.now() + (w === 2 ? KNIFE.switch : drawTime(w));
+function switchWeapon(slot, force = false) {
+  if (!me.alive) return;
+  const s = clamp(slot | 0, 1, 3);
+  if (s === me.slot && !force) return;
+  if (s !== me.slot) me.lastSlot = me.slot;
+  me.slot = s;
+  const w = activeWeaponDef();
+  const vmSlot = activeVmSlot();
+  me.weapon = vmSlot;
+  me.switchUntil = performance.now() + Math.min(600, Math.round((w.equipSec || 0.55) * 450));
   me.reloadEnd = 0;
   adsHeld = false;
   vm.reload(0.0001); vm.reloadT = 1;
-  vm.setWeapon(w);
-  hud.setWeapon(w, me.ammo);
+  if (vmSlot === 1) vm.setGunDef(w, getEquippedSkin(w.id));
+  vm.setWeapon(vmSlot, force);
+  syncHudLoadout();
   hud.setReload(-1);
-  if (w !== 2) audio.ui();
+  if (vmSlot !== 2) audio.ui();
 }
 function startReload() {
   const now = performance.now();
-  const G = WEAPONS[me.weapon];
-  if (!G || me.ammo >= G.mag || me.reloadEnd > now || !me.alive) return;
+  const w = activeWeaponDef();
+  if (w.slot === 'melee' || !me.alive || me.reloadEnd > now) return;
+  const curAmmo = me.ammoMap[w.id] ?? w.mag;
+  if (curAmmo >= w.mag) return;
+  const durMs = Math.round((w.reloadSec || 2.2) * 1000);
   me.reloadStart = now;
-  me.reloadEnd = now + G.reload;
-  vm.reload(G.reload / 1000);
+  me.reloadDurMs = durMs;
+  me.reloadEnd = now + durMs;
+  vm.reload(durMs / 1000);
   audio.reload();
 }
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _e = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _m = new THREE.Vector3();
 function aimDir(out) { return out.set(0, 0, -1).applyEuler(camera.rotation); }
+function allTargets() {
+  const list = [];
+  for (const p of peers.values()) if (p.alive && p.pose) list.push(p);
+  for (const d of dummies.values()) if (d.alive && d.pose) list.push(d);
+  return list;
+}
 function tryFire(heavy = false) {
   const now = performance.now();
   if (!me.alive || now < me.switchUntil) return;
   me.protectedUntil = Math.min(me.protectedUntil, now); // firing ends spawn protection
-  if (me.weapon === 0 || me.weapon === 2) {
+  const w = activeWeaponDef();
+  if (w.slot === 'melee') {
     if (now < me.nextFire) return;
-    const isKnife = me.weapon === 2;
+    const isKnife = w.id === 'knife';
     const range = isKnife ? KNIFE.range : FIST.range;
     me.nextFire = now + (isKnife ? (heavy ? KNIFE.heavyCd : KNIFE.cd) : FIST.cd);
     if (isKnife) {
@@ -758,16 +1076,15 @@ function tryFire(heavy = false) {
     _o.copy(camera.position); aimDir(_d);
     const wall = world.raycast(_o, _d, range, (b) => b.bullet);
     const maxT = wall ? wall.t : range;
+    const targets = allTargets();
     let best = null;
-    for (const p of peers.values()) {
-      if (!p.alive || !p.pose) continue;
+    for (const p of targets) {
       const h = rayPlayer(_o, _d, p.pose, p.pose.yaw, p.pose.crouch, maxT);
       if (h && (!best || h.t < best.t)) best = { p, t: h.t, part: h.part };
     }
     if (!best) {
       // generous cone for melee
-      for (const p of peers.values()) {
-        if (!p.alive || !p.pose) continue;
+      for (const p of targets) {
         _e.set(p.pose.x, p.pose.y + (p.pose.crouch ? 0.8 : 1.15), p.pose.z).sub(_o);
         const dist = _e.length();
         if (dist > range + 0.3 || dist > maxT + 0.4) continue;
@@ -798,61 +1115,97 @@ function tryFire(heavy = false) {
     }
     return;
   }
-  // firearm (AWM / UMP45 / M416 / AKM)
-  const G = WEAPONS[me.weapon];
-  if (!G || me.reloadEnd > now || now < me.nextFire) return;
-  if (me.ammo <= 0 && !me.infAmmo) { if (now - (me.dryAt || 0) > 350) { me.dryAt = now; audio.dry(); } startReload(); return; }
-  if (!me.infAmmo) me.ammo--;
-  else me.ammo = G.mag;
-  me.nextFire = now + G.cd;
+
+  // Firearm (Primary or Secondary)
+  if (me.reloadEnd > now || now < me.nextFire) return;
+  let curAmmo = me.ammoMap[w.id] ?? w.mag;
+  if (curAmmo <= 0 && !me.infAmmo) { audio.dry(); startReload(); return; }
+  if (!me.infAmmo) curAmmo--;
+  else curAmmo = w.mag;
+  me.ammoMap[w.id] = curAmmo;
+  me.ammo = curAmmo;
+  const cdMs = w.id === 'operator' ? AWM.cd : Math.round(1000 / Math.max(0.5, w.fireRate));
+  me.nextFire = now + cdMs;
+
   const hs = Math.hypot(me.vel.x, me.vel.z);
-  const scoped = me.weapon === 1 && me.ads > 0.92;
-  const rctx = { ads: me.ads, crouch: me.crouching, moving: hs > 1.5, air: !me.onGround, scoped, speed: hs, bloom: recoil.bloom };
-  const spread = spreadOf(G, rctx); // bullet leaves with the bloom that existed BEFORE this shot
-  _o.copy(camera.position); aimDir(_d);
-  if (spread > 0) {
-    _r.set(1, 0, 0).applyEuler(camera.rotation); _u.set(0, 1, 0).applyEuler(camera.rotation);
-    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * spread;
-    _d.addScaledVector(_r, Math.cos(a) * r).addScaledVector(_u, Math.sin(a) * r).normalize();
-  }
-  const wall = world.raycast(_o, _d, 1500, (b) => b.bullet);
-  let maxT = wall ? wall.t : 1500;
-  let best = null;
-  for (const p of peers.values()) {
-    if (!p.alive || !p.pose) continue;
-    const h = rayPlayer(_o, _d, p.pose, p.pose.yaw, p.pose.crouch, maxT);
-    if (h && (!best || h.t < best.t)) best = { p, t: h.t, part: h.part };
-  }
-  const endT = best ? best.t : maxT;
-  _e.copy(_o).addScaledVector(_d, endT);
-  // muzzle position (world)
-  _r.set(1, 0, 0).applyEuler(camera.rotation); _u.set(0, 1, 0).applyEuler(camera.rotation);
+  const scoped = w.scope && me.ads > 0.92;
+  const baseDeg = lerp(w.spreadHip || 0.3, w.spreadAds || 0, me.ads);
+  let spread = scoped ? 0 : (baseDeg * Math.PI) / 180;
+  spread += (hs / 6) * (scoped ? 0.01 : 0.022);
+  if (!me.onGround) spread += 0.055;
+  if (me.crouching) spread *= 0.6;
+  if (w.pellets > 1) spread = w.pelletSpread || 0.075;
+
+  _o.copy(camera.position);
+  _r.set(1, 0, 0).applyEuler(camera.rotation);
+  _u.set(0, 1, 0).applyEuler(camera.rotation);
   aimDir(_m);
-  const muzzle = new THREE.Vector3().copy(camera.position).addScaledVector(_m, scoped ? 0.8 : 1.15).addScaledVector(_r, scoped ? 0 : 0.2).addScaledVector(_u, scoped ? -0.12 : -0.2);
-  // start the visible tracer a bit ahead of the eye so it never fills the screen
-  const tStart = muzzle.clone().addScaledVector(_d, scoped ? 4 : 1.5);
-  if (tStart.distanceTo(_o) < endT) vfx.tracer(tStart, _e, 0xffe7a8, scoped ? 0.015 : 0.02);
-  vfx.light.position.copy(muzzle); vfx.lightT = 0;
-  if (best) {
-    const head = best.part === 'head';
-    let dmg = head ? G.head : best.part === 'legs' ? G.legs : G.body;
-    if (G.falloff) dmg *= 1 - G.falloff * clamp((best.t - G.range * 0.4) / (G.range * 1.6), 0, 1); // range falloff
-    vfx.blood(_e, _d, head);
-    dealDamage(best.p, Math.round(dmg), head, G.id, best.t);
-  } else if (wall) {
-    vfx.impact(_e, wall.normal, wall.mat);
+  const muzzle = new THREE.Vector3().copy(camera.position).addScaledVector(_m, scoped ? 0.8 : 1.1).addScaledVector(_r, scoped ? 0 : 0.18).addScaledVector(_u, scoped ? -0.12 : -0.18);
+  const targets = allTargets();
+  const pelletCount = w.pellets || 1;
+  const maxRange = w.range || 600;
+  const hitSummary = new Map();
+  let lastEnd = null, lastWall = null, anyHit = false;
+
+  for (let i = 0; i < pelletCount; i++) {
+    aimDir(_d);
+    if (spread > 0) {
+      const a = Math.random() * Math.PI * 2;
+      const r = (pelletCount > 1 ? Math.sqrt(Math.random()) : Math.random()) * spread;
+      _d.addScaledVector(_r, Math.cos(a) * r).addScaledVector(_u, Math.sin(a) * r).normalize();
+    }
+    const wall = world.raycast(_o, _d, maxRange, (b) => b.bullet);
+    const maxT = wall ? wall.t : maxRange;
+    let best = null;
+    for (const p of targets) {
+      if (!p.alive) continue;
+      const h = rayPlayer(_o, _d, p.pose, p.pose.yaw, p.pose.crouch, maxT);
+      if (h && (!best || h.t < best.t)) best = { p, t: h.t, part: h.part };
+    }
+    const endT = best ? best.t : maxT;
+    _e.copy(_o).addScaledVector(_d, endT);
+    const tStart = muzzle.clone().addScaledVector(_d, scoped ? 4 : 1.4);
+    if (tStart.distanceTo(_o) < endT && (pelletCount === 1 || i % 2 === 0)) {
+      vfx.tracer(tStart, _e, w.silenced ? 0xcbe8ff : 0xffe7a8, scoped ? 0.015 : pelletCount > 1 ? 0.012 : 0.018);
+    }
+    if (best) {
+      anyHit = true;
+      const head = best.part === 'head';
+      const dmg = head ? w.dmg.head : best.part === 'legs' ? w.dmg.legs : w.dmg.body;
+      vfx.blood(_e, _d, head);
+      const prev = hitSummary.get(best.p);
+      if (prev) {
+        prev.dmg += dmg;
+        prev.head = prev.head || head;
+        prev.dist = Math.min(prev.dist, best.t);
+      } else {
+        hitSummary.set(best.p, { dmg, head, dist: best.t });
+      }
+    } else if (wall && (pelletCount === 1 || i < 4)) {
+      vfx.impact(_e, wall.normal, wall.mat);
+    }
+    if (i === 0) { lastEnd = _e.clone(); lastWall = wall; }
   }
-  net.send({ t: 'f', w: me.weapon, o: [r2(muzzle.x), r2(muzzle.y), r2(muzzle.z)], e: [r2(_e.x), r2(_e.y), r2(_e.z)], h: best ? 1 : 0, n: !best && wall ? wall.normal : undefined, m: !best && wall ? wall.mat : undefined });
-  const kick = recoil.kick(G, rctx, now);
-  me.recoil += me.weapon === 1 ? 0.03 : 0.006 + kick.up * 0.6; // visual-only punch on top of the real kick
-  me.shake = Math.max(me.shake, me.weapon === 1 ? 0.6 : 0.2 + G.weight * 0.03);
-  vm.fire(me.weapon);
-  if (me.weapon === 1) audio.awm(null); else audio.rifle(null, me.weapon);
-  if (me.weapon === 1 && me.ammo > 0) audio.bolt(0.35);
-  else if (me.ammo <= 0) setTimeout(() => { if (me.alive && isGun(me.weapon)) startReload(); }, 600);
-  hud.setWeapon(me.weapon, me.ammo);
+
+  for (const [target, info] of hitSummary.entries()) {
+    dealDamage(target, info.dmg, info.head, w.id, info.dist);
+  }
+
+  if (!w.silenced) { vfx.light.position.copy(muzzle); vfx.lightT = 0; }
+  if (lastEnd) {
+    net.send({ t: 'f', w: 1, o: [r2(muzzle.x), r2(muzzle.y), r2(muzzle.z)], e: [r2(lastEnd.x), r2(lastEnd.y), r2(lastEnd.z)], h: anyHit ? 1 : 0, n: !anyHit && lastWall ? lastWall.normal : undefined, m: !anyHit && lastWall ? lastWall.mat : undefined });
+  }
+  const rk = w.recoilKick || 0.025;
+  me.recoil = Math.min(0.14, me.recoil + rk * (me.ads > 0.5 ? 0.72 : 1));
+  me.shake = Math.max(me.shake, Math.min(0.65, rk * 11));
+  vm.fire();
+  audio.gunshot(w, null);
+  if (w.id === 'operator' && curAmmo > 0) audio.bolt(0.35);
+  if (curAmmo <= 0) setTimeout(() => { if (me.alive && activeWeaponId() === w.id) startReload(); }, 350);
+  syncHudLoadout();
 }
 function dealDamage(p, dmg, head, weapon, dist) {
+  if (p.isDummy) { damageDummy(p, dmg, head, weapon, dist); return; }
   if (p.protected) { vfx.ring(new THREE.Vector3(p.pose.x, p.pose.y + 1, p.pose.z), 0x5cf0a0); return; }
   net.send({ t: 'dmg', v: p.id, d: dmg, hs: head ? 1 : 0, w: weapon, dist: Math.round(dist), from: [r2(me.pos.x), r2(me.pos.y + 1.5), r2(me.pos.z)] });
   hud.hit(head ? 'head' : 'body');
@@ -934,7 +1287,7 @@ function onNetMessage(from, m) {
       const o = now - m.ts;
       if (p.offset === null || o < p.offset || Math.abs(o - p.offset) > 1500) p.offset = o;
       else p.offset += (o - p.offset) * 0.01;
-      const s = { t: m.ts + p.offset, x: +m.p[0], y: +m.p[1], z: +m.p[2], yaw: +m.r || 0, pitch: +m.x || 0, w: clamp(m.w | 0, 0, 5), c: !!m.c, sp: +m.sp || 0, pr: !!m.pr, g: !!m.g };
+      const s = { t: m.ts + p.offset, x: +m.p[0], y: +m.p[1], z: +m.p[2], yaw: +m.r || 0, pitch: +m.x || 0, w: clamp(m.w | 0, 0, 2), c: !!m.c, sp: +m.sp || 0, pr: !!m.pr, g: !!m.g };
       if (!isFinite(s.x + s.y + s.z)) return;
       p.buf.push(s);
       if (p.buf.length > 40) p.buf.shift();
@@ -955,7 +1308,7 @@ function onNetMessage(from, m) {
       const dir = e.clone().sub(o).normalize();
       vfx.tracer(o, e);
       vfx.muzzle(o, dir);
-      if ((m.w | 0) >= 3) audio.rifle(o, m.w | 0); else audio.awm(o);
+      audio.awm(o);
       if (m.h) vfx.blood(e, dir, false);
       else if (Array.isArray(m.n)) vfx.impact(e, m.n, m.m);
       if (p.avatar) p.avatar.fire();
@@ -990,11 +1343,14 @@ function onNetMessage(from, m) {
       p.deaths++;
       if (m.k === net.id) {
         me.kills++;
+        me.killStreak = (me.killStreak || 0) + 1;
         me.hp = Math.min(MAX_HP, me.hp + KILL_HEAL);
         hud.setHP(me.hp);
         hud.hit('kill');
-        audio.kill();
-        hud.center(`HẠ GỤC ${p.name.toUpperCase()}`, (m.hs ? 'HEADSHOT · ' : '') + `+${KILL_HEAL} HP`, 'kill');
+        const tier = Math.max(1, Math.min(6, me.killStreak));
+        hud.showKillEffect(tier, settings.vol, () => audio.kill());
+        const streakLabel = me.killStreak === 5 ? 'ACE (5 MẠNG) · ' : me.killStreak >= 6 ? `CHUỖI ${me.killStreak} MẠNG · ` : me.killStreak > 1 ? `MẠNG LIÊN TIẾP #${me.killStreak} · ` : '';
+        hud.center(`HẠ GỤC ${p.name.toUpperCase()}`, streakLabel + (m.hs ? 'HEADSHOT · ' : '') + `+${KILL_HEAL} HP`, 'kill');
         addKill({ name: myName(), color: me.color }, p, m.w, m.hs, true, m.dist);
         sendHello();
       } else {
@@ -1030,7 +1386,7 @@ function closestOnSeg(a, b, p) {
 }
 function addKill(killer, victim, weapon, hs, mine, dist) {
   hud.killfeed(killer, victim, weapon, hs, mine || victim.name === myName(), dist);
-  const wName = weaponLabel(weapon);
+  const wName = WEAPONS[weapon]?.name || (weapon === 'fist' ? 'nắm đấm' : weapon === 'knife' ? 'dao Butterfly' : 'AWM');
   feed.unshift(`<b style="color:${killer.color}">${escapeHtml(killer.name)}</b> hạ <b style="color:${victim.color}">${escapeHtml(victim.name)}</b> bằng ${wName}${hs ? ' (headshot)' : ''}${dist ? ` · ${Math.round(dist)}m` : ''}`);
   if (feed.length > 30) feed.pop();
 }
@@ -1063,7 +1419,6 @@ function updatePlayer(dt, now) {
   const k = 0.0022 * settings.sens * zoom;
   me.yaw -= mouseDX * k;
   me.pitch = clamp(me.pitch - mouseDY * k, -1.52, 1.52);
-  recoil.compensate(mouseDY * k); // pulling down cancels stored kick
   lookDX = mouseDX; lookDY = mouseDY;
   mouseDX = mouseDY = 0;
 
@@ -1088,11 +1443,11 @@ function updatePlayer(dt, now) {
   const wx = fx * cos + fz * sin, wz = -fx * sin + fz * cos;
   const sprint = keys.ShiftLeft && fz < 0 && !me.crouching && me.ads < 0.3;
   me.sprint = !!sprint;
-  // carry weight: every weapon has a mass (weapons.js) that scales walk / sprint / ADS speed
-  const wMult = weaponSpeedMult(me.weapon);
+  const curW = activeWeaponDef();
+  const wSpeedFactor = curW ? clamp((curW.runSpeed || 5.4) / 5.4, 0.85, 1.18) : 1;
   let speed = (me.crouching ? 2.8 : sprint ? 8.2 : 5.4) * (me.speedMult || 1);
-  if (me.ads > 0.5) speed *= adsSpeedMult(me.weapon);
-  speed *= me.crouching ? 1 + (wMult - 1) * 0.5 : wMult;
+  if (!me.crouching) speed *= wSpeedFactor;
+  if (me.ads > 0.5) speed *= curW.scope ? 0.55 : 0.78;
   const accel = me.onGround ? 14 : 2.5;
   const tx = (fx || fz) ? wx * speed : 0, tz = (fx || fz) ? wz * speed : 0;
   me.vel.x = damp(me.vel.x, tx, accel, dt);
@@ -1118,16 +1473,15 @@ function updatePlayer(dt, now) {
   }
 
   // weapons state
-  if (me.reloadEnd && now >= me.reloadEnd) { me.reloadEnd = 0; me.ammo = isGun(me.weapon) ? WEAPONS[me.weapon].mag : me.ammo; hud.setWeapon(me.weapon, me.ammo); }
-  hud.setReload(me.reloadEnd && isGun(me.weapon) ? (now - me.reloadStart) / WEAPONS[me.weapon].reload : -1);
-  const canAds = isGun(me.weapon) && !me.reloadEnd && now >= me.switchUntil && adsHeld && !sprint;
-  me.ads = clamp(me.ads + (canAds ? dt * 6 : -dt * 8), 0, 1);
-  if (firing && (me.weapon === 0 || me.weapon === 2 || WEAPONS[me.weapon]?.auto)) tryFire(false);
-  if (me.alive) { // recoil kick moves the real aim (PUBG style: stays until the player pulls down)
-    const r = recoil.update(WEAPONS[me.weapon], dt, now);
-    me.pitch = clamp(me.pitch + r.dPitch, -1.52, 1.52);
-    me.yaw += r.dYaw;
+  if (me.reloadEnd && now >= me.reloadEnd) {
+    me.reloadEnd = 0;
+    if (typeof curW.mag === 'number') me.ammoMap[curW.id] = curW.mag;
+    syncHudLoadout();
   }
+  hud.setReload(me.reloadEnd ? (now - me.reloadStart) / Math.max(100, me.reloadDurMs || AWM.reload) : -1);
+  const canAds = curW.slot !== 'melee' && !me.reloadEnd && now >= me.switchUntil && adsHeld && !sprint && !buyMenu?.open;
+  me.ads = clamp(me.ads + (canAds ? dt * 6 : -dt * 8), 0, 1);
+  if (firing && !buyMenu?.open && (curW.slot === 'melee' || curW.auto)) tryFire(false);
 
   // regen
   if (me.hp < MAX_HP && now - me.lastDamage > 7000) { me.hp = Math.min(MAX_HP, me.hp + 8 * dt); hud.setHP(me.hp); }
@@ -1140,16 +1494,17 @@ function updatePlayer(dt, now) {
   camera.position.set(me.pos.x, eye, me.pos.z);
   const sh = me.shake * 0.012;
   camera.rotation.set(me.pitch + me.recoil + (Math.random() - 0.5) * sh, me.yaw + (Math.random() - 0.5) * sh, 0);
-  const scoped = me.weapon === 1 && me.ads > 0.92;
-  const targetFov = scoped ? 13 : 75 - me.ads * 12 + (sprint && hs > 6 ? 5 : 0);
+  const scoped = !!(curW.scope && me.ads > 0.92);
+  const adsFov = curW.adsFov || 62;
+  const targetFov = scoped ? adsFov : lerp(75, curW.scope ? 62 : adsFov, me.ads) + (sprint && hs > 6 ? 5 : 0);
   if (Math.abs(camera.fov - targetFov) > 0.05) { camera.fov = scoped ? targetFov : damp(camera.fov, targetFov, 14, dt); camera.updateProjectionMatrix(); }
 
   // HUD
   const protectedNow = now < me.protectedUntil;
   hud.protect(protectedNow);
-  const GW = WEAPONS[me.weapon];
-  // crosshair gap follows the real bullet cone (bloom, movement, air, crouch, ADS)
-  let spreadPx = GW ? spreadOf(GW, { ads: me.ads, crouch: me.crouching, moving: hs > 1.5, air: !me.onGround, scoped: false, speed: hs, bloom: recoil.bloom }) * 300 - (me.weapon === 1 ? 6 : 0) : 0;
+  let spreadPx = curW.slot !== 'melee' ? (4 + (curW.spreadHip || 0.3) * 8) + hs * 2.4 + (me.onGround ? 0 : 18) : 0;
+  if (me.crouching) spreadPx *= 0.6;
+  if (me.ads > 0.4) spreadPx *= 0.5;
   hud.setSpread(spreadPx);
   if (scoped && (!updatePlayer.rangeT || now - updatePlayer.rangeT > 120)) {
     updatePlayer.rangeT = now;
@@ -1250,6 +1605,12 @@ function frame() {
   else lobbyCam(dt);
 
   updatePeers(dt, now);
+  for (const d of dummies.values()) {
+    if (!d.alive || !d.avatar || !d.pose) continue;
+    d.avatar.update(dt, { x: d.pose.x, y: d.pose.y, z: d.pose.z, yaw: d.pose.yaw, pitch: 0, speed: 0, crouch: false, weapon: 0, protected: false });
+    const dist = Math.hypot(d.pose.x - camera.position.x, d.pose.z - camera.position.z);
+    d.avatar.tag.visible = dist < 90;
+  }
   if (net.connected) {
     if (state === 'playing') sendState(false);
     if (now - lastHello > 2000) sendHello();
@@ -1288,11 +1649,13 @@ function frame() {
     });
     me.jumpImpulse = 0;
     me.landImpulse = 0;
-    if (me.ads <= 0.92 || me.weapon !== 1) {
+    const curW = activeWeaponDef();
+    if (!(curW.scope && me.ads > 0.92)) {
       renderer.clearDepth();
       renderer.render(vm.scene, vm.camera);
     }
-    hud.drawMinimap(me.pos.x, me.pos.z, me.yaw, peers);
+    const mapEntities = dummies.size ? new Map([...peers, ...dummies]) : peers;
+    hud.drawMinimap(me.pos.x, me.pos.z, me.yaw, mapEntities);
     hud.drawBigMap(!!keys.KeyM, me.pos.x, me.pos.z, me.yaw);
     hud.scoreboard(showBoard, allPlayers());
   } else if (state === 'lobby') {
@@ -1307,4 +1670,4 @@ function frame() {
 }
 
 // test hooks
-window.__game = { audio, get hud() { return hud; }, get chat() { return chat; }, get inspector() { return inspector; }, me, peers, net, world, camera, keys, spawn, tryFire, switchWeapon, setTimeOfDay, handleChatCommand, get forcedPhase() { return forcedPhase; }, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };
+window.__game = { audio, get hud() { return hud; }, get chat() { return chat; }, get buyMenu() { return buyMenu; }, get collectionUI() { return collectionUI; }, get inspector() { return inspector; }, me, peers, dummies, net, world, camera, keys, spawn, tryFire, switchWeapon, setTimeOfDay, handleChatCommand, triggerKillStreak, spawnDummy, clearDummies, toggleBuyMenu, equipFromShop, unlockAllSkins, unlockSkin, resetSkins, getEquippedSkin, WEAPONS, get forcedPhase() { return forcedPhase; }, get vm() { return vm; }, get state() { return state; }, setLook(y, p) { me.yaw = y; me.pitch = p; }, setAds(v) { adsHeld = v; } };

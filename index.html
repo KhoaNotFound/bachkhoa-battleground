@@ -34,6 +34,15 @@
 
 <!-- ============ LOBBY ============ -->
 <div id="lobby" class="screen hidden">
+  <div class="lobby-top-actions">
+    <button id="collectionBtn" type="button" class="collection-btn">
+      <span class="col-btn-ico">◈</span>
+      <span class="col-btn-text">
+        <b>BỘ SƯU TẬP · SKINS</b>
+        <small>Đổi skin vũ khí &amp; xem 3D</small>
+      </span>
+    </button>
+  </div>
   <div class="lobby-grid">
     <section class="panel main-panel">
       <div class="brand">
@@ -61,8 +70,7 @@
 
       <div class="loadout">
         <div class="slot"><kbd>1</kbd><div><b>Nắm đấm</b><small>25 sát thương · cận chiến</small></div></div>
-        <div class="slot"><kbd>2</kbd><div><b>AWM</b><small>Headshot hạ ngay · thân 85 · nặng 6.8 kg</small></div></div>
-        <div class="slot"><kbd>4 5 6</kbd><div><b>UMP45 · M416 · AKM</b><small>Súng liên thanh: giật tăng dần, kéo chuột xuống để giữ tâm · súng càng nặng càng chạy chậm</small></div></div>
+        <div class="slot"><kbd>2</kbd><div><b>AWM</b><small>Headshot hạ ngay · thân 85</small></div></div>
         <div class="slot"><kbd>3</kbd><div><b>Butterfly</b><small>45/75 sát thương · xoay F</small></div></div>
       </div>
 
@@ -86,9 +94,10 @@
         <h3>Điều khiển</h3>
         <div class="kb"><kbd>W A S D</kbd> di chuyển <kbd>Shift</kbd> chạy <kbd>Space</kbd> nhảy <kbd>C</kbd> ngồi</div>
         <div class="kb"><kbd>Chuột trái</kbd> bắn/chém <kbd>Chuột phải</kbd> ngắm/đâm mạnh <kbd>R</kbd> nạp đạn <kbd>F</kbd> xoay dao</div>
-        <div class="kb"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>Q</kbd> đổi vũ khí <kbd>Tab</kbd> bảng điểm <kbd>M</kbd> bản đồ <kbd>/</kbd> chat <kbd>Esc</kbd> tạm dừng</div>
+        <div class="kb"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>Q</kbd> đổi vũ khí <kbd>B</kbd> mua súng <kbd>Tab</kbd> bảng điểm <kbd>M</kbd> bản đồ <kbd>/</kbd> chat <kbd>Esc</kbd> tạm dừng</div>
         <p class="tip">Bản đồ khuôn viên kích thước thật (~560 × 450 m): tận dụng hàng cây và các dãy nhà để ẩn nấp.</p>
         <p class="tip"><a href="night/" style="color:#ffe9a8">☾ Chế độ mới: Ở lại trường vào buổi tối</a> (co-op 2–5 người, có voice chat).</p>
+        <p class="tip" id="mapModeTip"><a href="?map=review" style="color:#a8e6ff">🧪 Thử map mới</a> (bản dựng lại các toà nhà, vào được mọi tầng; phòng chơi riêng).</p>
       </div>
     </section>
   </div>
@@ -146,24 +155,96 @@
   </div>
 
   <div class="weapons">
-    <div id="slot0" class="wslot"><kbd>1</kbd><span class="wicon fist"></span><span class="wname">Nắm đấm</span></div>
-    <div id="slot1" class="wslot"><kbd>2</kbd><span class="wicon awm"></span><span class="wname">AWM</span><span id="ammo" class="ammo">5<small>/∞</small></span></div>
-    <div id="slot2" class="wslot"><kbd>3</kbd><span class="wicon knife"></span><span class="wname">Butterfly</span></div>
-    <div id="slot3" class="wslot"><kbd>4</kbd><span class="wicon rifle"></span><span class="wname">UMP45 <small>2.3 kg</small></span></div>
-    <div id="slot4" class="wslot"><kbd>5</kbd><span class="wicon rifle"></span><span class="wname">M416 <small>3.5 kg</small></span></div>
-    <div id="slot5" class="wslot"><kbd>6</kbd><span class="wicon rifle"></span><span class="wname">AKM <small>4.3 kg</small></span></div>
+    <div id="slot1" class="wslot"><kbd>1</kbd><span id="slot1Icon" class="wicon svg-icon"></span><span id="slot1Name" class="wname">OPERATOR</span><span id="ammoPrimary" class="ammo">5<small>/∞</small></span></div>
+    <div id="slot2" class="wslot"><kbd>2</kbd><span id="slot2Icon" class="wicon svg-icon"></span><span id="slot2Name" class="wname">CLASSIC</span><span id="ammoSecondary" class="ammo">12<small>/∞</small></span></div>
+    <div id="slot3" class="wslot"><kbd>3</kbd><span id="slot3Icon" class="wicon svg-icon"></span><span id="slot3Name" class="wname">Butterfly</span></div>
     <div id="reloadBar" class="reload-bar hidden"><i></i></div>
+    <div class="buy-hint"><kbd>B</kbd> Bảng vũ khí</div>
   </div>
 
   <canvas id="minimap" width="200" height="200"></canvas>
   <canvas id="bigmap" class="hidden"></canvas>
   <div id="killfeed" class="killfeed"></div>
   <div id="centerMsg" class="center-msg"></div>
+  <canvas id="killBanner" class="kill-banner hidden" width="520" height="280"></canvas>
   <div id="stats" class="stats"></div>
 
   <div id="scoreboard" class="scoreboard hidden">
     <h2>BẢNG ĐIỂM</h2>
     <table><thead><tr><th>#</th><th>Người chơi</th><th>Hạ</th><th>Chết</th><th>Trạng thái</th></tr></thead><tbody id="sbBody"></tbody></table>
+  </div>
+</div>
+
+<!-- ============ BUY MENU (PRESS B) ============ -->
+<div id="buyMenu" class="screen buy-menu hidden">
+  <div class="bm-backdrop"></div>
+  <div class="bm-shell">
+    <div class="bm-topbar">
+      <div class="bm-title-group">
+        <span class="bm-tag">ARMORY · KHO VŨ KHÍ</span>
+        <span class="bm-credits">¤ 9,000 <small>MIỄN PHÍ TRANG BỊ</small></span>
+      </div>
+      <div class="bm-hint">Nhấn <kbd>B</kbd> hoặc <kbd>Esc</kbd> để đóng</div>
+      <button id="buyCloseBtn" class="bm-close" title="Đóng (B)">✕</button>
+    </div>
+    <div class="bm-body">
+      <div id="buyGrid" class="bm-grid"></div>
+      <aside id="buyStats" class="bm-stats"></aside>
+    </div>
+  </div>
+</div>
+
+<!-- ============ COLLECTION / SKINS SCREEN ============ -->
+<div id="collectionScreen" class="screen col-screen hidden">
+  <div class="col-bg"></div>
+  <div class="col-shell">
+    <header class="col-topbar">
+      <button id="colBackBtn" type="button" class="col-back-btn">← QUAY LẠI</button>
+      <div id="colBreadcrumb" class="col-breadcrumb">COLLECTION // KHO VŨ KHÍ</div>
+      <div id="colTotalBadge" class="col-total-badge">0 / 0 SKINS ĐÃ SỞ HỮU</div>
+      <button id="colCloseBtn" type="button" class="bm-close" title="Đóng (Esc)">✕</button>
+    </header>
+
+    <!-- View 1: All Weapons Arsenal (Image 1) -->
+    <section id="colArsenalView" class="col-arsenal-view">
+      <div id="colArsenalGrid" class="col-arsenal-grid"></div>
+    </section>
+
+    <!-- View 2: Weapon Skins Detail + 3D 360° Preview (Image 2) -->
+    <section id="colDetailView" class="col-detail-view hidden">
+      <div class="col-left">
+        <div class="col-toolbar">
+          <button id="colFilterBtn" type="button" class="col-filter-btn" title="Lọc skin đã sở hữu">≡</button>
+          <div class="col-search-wrap">
+            <span class="col-search-ico">⌕</span>
+            <input id="colSearchInput" type="text" placeholder="TÌM KIẾM SKIN..." autocomplete="off" spellcheck="false">
+          </div>
+          <span id="colSkinCounter" class="col-skin-counter">1 / 1</span>
+        </div>
+        <div id="colSkinGrid" class="col-skin-grid"></div>
+      </div>
+
+      <div class="col-right">
+        <div class="col-skin-header">
+          <span id="colTierSymbol" class="col-tier-symbol">▽</span>
+          <h2 id="colSkinTitle" class="col-skin-title">VANDAL</h2>
+        </div>
+        <div id="colSkinSub" class="col-skin-sub">MẶC ĐỊNH</div>
+
+        <div class="col-stage">
+          <canvas id="colPreviewCanvas" class="col-preview-canvas"></canvas>
+          <div class="col-stage-hint">Kéo chuột xoay 360° · Cuộn để phóng to / thu nhỏ</div>
+        </div>
+
+        <p id="colSkinDesc" class="col-skin-desc"></p>
+
+        <div class="col-actions">
+          <button id="colEquipBtn" type="button" class="col-equip-btn">
+            <span>TRANG BỊ SKIN</span>
+          </button>
+        </div>
+      </div>
+    </section>
   </div>
 </div>
 

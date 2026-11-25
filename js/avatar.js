@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { loadGLB } from './glb-loader.js';
 import * as TX from './textures.js';
 import { damp, lerpAngle } from './util.js';
 import { rayBox } from './physics.js';
@@ -24,25 +24,20 @@ const gunGold = new THREE.MeshLambertMaterial({ color: 0xc29e44 });
 let cachedAwpTemplate = null;
 function loadAwpTemplate() {
   if (!cachedAwpTemplate) {
-    cachedAwpTemplate = new Promise((resolve) => {
-      new GLTFLoader().load(
-        new URL('../assets/awp-dragon-lore.glb', import.meta.url).href,
-        (gltf) => {
-          const tpl = new THREE.Group();
-          gltf.scene.traverse((o) => {
-            if (o.isMesh && o.name && o.name.startsWith('Awp')) {
-              const part = new THREE.Mesh(o.geometry, o.material);
-              part.castShadow = true;
-              tpl.add(part);
-            }
-          });
-          tpl.scale.setScalar(2.2);
-          resolve(tpl);
-        },
-        undefined,
-        () => resolve(null)
-      );
-    });
+    cachedAwpTemplate = loadGLB(new URL('../assets/awp-dragon-lore.glb', import.meta.url).href)
+      .then((gltf) => {
+        const tpl = new THREE.Group();
+        gltf.scene.traverse((o) => {
+          if (o.isMesh && o.name && o.name.startsWith('Awp')) {
+            const part = new THREE.Mesh(o.geometry, o.material);
+            part.castShadow = true;
+            tpl.add(part);
+          }
+        });
+        tpl.scale.setScalar(2.2);
+        return tpl;
+      })
+      .catch(() => null);
   }
   return cachedAwpTemplate;
 }

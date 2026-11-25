@@ -1,5 +1,5 @@
 // Bách Khoa Battleground relay server.
-// - Serves the static game files
+// - Serves the static game files with ETag, Cache-Control, and streaming
 // - Relays JSON messages between players in the same room over WebSocket
 // - Bridges every room to the public MQTT broker so players who connect
 //   through MQTT (when this server is unreachable) share the same world.
@@ -18,7 +18,29 @@ const BROKER = process.env.BROKER || 'wss://broker.emqx.io:8084/mqtt';
 const TOPIC_ROOT = 'bkbg/v2';
 const BRIDGE = process.env.BRIDGE !== '0';
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary' };
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.glb': 'model/gltf-binary',
+  '.wasm': 'application/wasm',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.bin': 'application/octet-stream',
+};
+
+// Heavy static binary/media assets can be cached aggressively by the browser
+// while still revalidating cleanly via ETag when updated.
+const LONG_CACHE_EXTS = new Set(['.glb', '.bin', '.png', '.jpg', '.webp', '.mp3', '.mp4', '.webm', '.wasm']);
+
 const rooms = new Map(); // room -> Set<ws>
 
 function idGen() {
@@ -41,10 +63,43 @@ const server = http.createServer((req, res) => {
   if (p.endsWith('/')) p += 'index.html';
   const file = path.normalize(path.join(ROOT, p));
   if (!file.startsWith(ROOT) || /[\\/]\./.test(file.slice(ROOT.length)) || file.includes(`${path.sep}node_modules`) || file.endsWith('.log') || file.endsWith('.sh')) { res.writeHead(403); res.end(); return; }
-  fs.readFile(file, (err, data) => {
-    if (err) { res.writeHead(404); res.end('not found'); return; }
-    res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-cache' });
-    res.end(data);
+
+  fs.stat(file, (err, stat) => {
+    if (err || !stat.isFile()) { res.writeHead(404); res.end('not found'); return; }
+
+    const ext = path.extname(file).toLowerCase();
+    const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+    const lastModified = stat.mtime.toUTCString();
+    const cacheControl = LONG_CACHE_EXTS.has(ext)
+      ? 'public, max-age=604800, stale-while-revalidate=86400'
+      : 'no-cache';
+
+    const headers = {
+      'content-type': MIME[ext] || 'application/octet-stream',
+      'cache-control': cacheControl,
+      'etag': etag,
+      'last-modified': lastModified,
+    };
+
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+
+    headers['content-length'] = stat.size;
+    res.writeHead(200, headers);
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+
+    const stream = fs.createReadStream(file);
+    stream.on('error', () => {
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    });
+    stream.pipe(res);
   });
 });
 
@@ -96,7 +151,7 @@ wss.on('connection', (ws, req) => {
   // Each player gets its own MQTT publisher: the public broker allows ~10 msgs/s per client,
   // so we batch this player's messages at 8 Hz (keeping only the latest state update).
   let pub = null, queue = [], flush = null;
-  if (bridge) {
+  if (BRIDGE) {
     const topic = `${TOPIC_ROOT}/${room}/${id}`;
     pub = mqtt.connect(BROKER, { clientId: 'bkbg_' + id + '_srv', clean: true, keepalive: 30, reconnectPeriod: 3000, will: { topic, payload: '{"t":"bye"}', qos: 0, retain: false } });
     pub.on('error', () => {});
